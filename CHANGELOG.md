@@ -32,6 +32,15 @@ Backends:
     0.2.5 holds on both backends.
   * candidate names beginning with `-` are never passed to `kpsewhich`
     (they would be parsed as options) and simply resolve to `None`.
+  * the `ls-R` cache **evicts ambiguous basenames** (a name listed under
+    more than one subdirectory): no single-pass tie-break can reproduce
+    kpathsea's path-spec ranking from raw `ls-R` order — TL ships two
+    `fonttext.cfg`s (first-wins picks csLaTeX's IL2 one) AND two
+    `hyphen.cfg`s (Perl's last-wins picks antomega's over babel's).
+    Evicted names resolve through the direct (memoized) `kpsewhich`
+    call — ground truth by construction. `-dev` pre-release
+    subdirectories are skipped before ambiguity detection (otherwise
+    every kernel file would be ambiguous against its latex-dev twin).
   * the `ls-R` cache is process-global, shared across instances per
     `kpsewhich` executable — as Perl's `$kpse_cache` always was.
     (Per-instance copies were ~50MB each on a full TeX Live, multiplied

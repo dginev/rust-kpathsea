@@ -205,16 +205,27 @@ impl SubprocessKpse {
 /// `$TEXMF` root list and the `tex` search path (the filter), then every
 /// `ls-R` database under a `$TEXMF` root is read into a basename → path map.
 ///
-/// Divergences from the Perl original, both deliberate:
-///  * **first-wins** instead of Perl's last-wins overwrite: `$TEXMF` lists
-///    trees in descending priority (TEXMFHOME before TEXMFDIST), and
-///    `kpsewhich` resolves in that order; Perl's `$$kpse_cache{$_} = ...`
-///    lets later (lower-priority) trees shadow earlier ones.
-///  * `-dev` subdirectories are skipped unconditionally (Perl gates this on
-///    its `latex-dev` debug flag). This is required for first-wins
-///    correctness: `tex/latex-dev/base/article.cls` sorts before
-///    `tex/latex/base/article.cls` in `ls-R`, and would otherwise shadow
-///    the release file.
+/// **Ambiguous basenames are evicted** — a name listed under more than one
+/// subdirectory is removed from the cache, so its lookups fall through to
+/// a direct `kpsewhich` call (memoized), which is ground truth by
+/// construction. This deliberately diverges from Perl's unconditional
+/// `$$kpse_cache{$_} = ...` overwrite, because NO single-pass tie-break
+/// can reproduce kpathsea's path-spec ranking from raw `ls-R` order.
+/// Two live witnesses (latexml-oxide format-dump validation, 2026-06-07):
+///
+///  * `fonttext.cfg`: TL ships `tex/cslatex/base/` (ISO Latin 2) and
+///    `tex/latex/base/`. kpathsea resolves the latter; first-wins on raw
+///    `ls-R` order picks csLaTeX's and silently turns LaTeX's text
+///    encoding Czech.
+///  * `hyphen.cfg`: TL ships `tex/generic/babel/` and
+///    `tex/lambda/antomega/`. kpathsea resolves babel's; LAST-wins (Perl's
+///    tie-break) picks antomega's.
+///
+/// `-dev` pre-release subdirectories are skipped before ambiguity
+/// detection (Perl gates the same skip on its `latex-dev` debug flag) —
+/// otherwise every kernel file would be "ambiguous" against its
+/// `latex-dev` twin and the eviction would gut the cache; dev-only files
+/// resolve through the direct call instead.
 ///
 /// On any failure the cache is simply left empty ("At least we've tried") —
 /// every lookup then falls through to a direct `kpsewhich` call.
@@ -267,6 +278,9 @@ fn build_kpse_cache(kpsewhich: &Path) -> HashMap<String, String> {
   }
   texmf = texmf.replace("{}", "");
 
+  // Names seen under more than one subdirectory; evicted below (see
+  // module docs — no `ls-R`-order tie-break matches kpathsea's ranking).
+  let mut ambiguous: std::collections::HashSet<String> = std::collections::HashSet::new();
   for dir in texmf.split(',') {
     let dir = dir.trim().trim_start_matches("!!");
     let lsr_path = Path::new(dir).join("ls-R");
@@ -284,15 +298,23 @@ fn build_kpse_cache(kpsewhich: &Path) -> HashMap<String, String> {
         subdir = sub.strip_prefix("./").unwrap_or(sub).to_string();
         let d = format!("{dir}/{subdir}");
         skip = !filters.iter().any(|f| d.contains(f.as_str()));
-        // -dev releases shadow their release twins under first-wins (see
-        // module docs); skip them like Perl does.
+        // Skip -dev pre-release trees BEFORE ambiguity detection (see
+        // module docs); their files resolve via the direct fallback.
         skip = skip || d.contains("-dev/") || d.ends_with("-dev");
       } else if !skip {
-        cache
-          .entry(line.to_string())
-          .or_insert_with(|| format!("{dir}/{subdir}/{line}"));
+        match cache.entry(line.to_string()) {
+          std::collections::hash_map::Entry::Vacant(slot) => {
+            slot.insert(format!("{dir}/{subdir}/{line}"));
+          }
+          std::collections::hash_map::Entry::Occupied(_) => {
+            ambiguous.insert(line.to_string());
+          }
+        }
       }
     }
+  }
+  for name in &ambiguous {
+    cache.remove(name);
   }
   cache
 }

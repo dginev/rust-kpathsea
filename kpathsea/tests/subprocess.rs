@@ -121,3 +121,24 @@ fn instances_agree_through_the_shared_cache() {
   assert_eq!(a.find_file("zz-not-a-file.qqq"), None);
   assert_eq!(b.find_file("zz-not-a-file.qqq"), None);
 }
+
+#[test]
+fn lsr_cache_agrees_with_cli_on_shadowed_basenames() {
+  // Regression witness for the ls-R cache tie-break (2026-06-07): TeX Live
+  // ships TWO `fonttext.cfg`s (`tex/cslatex/base/` and `tex/latex/base/`).
+  // In raw ls-R order cslatex comes first; kpathsea's path-spec order
+  // resolves the latex/base one. A first-wins cache returned the csLaTeX
+  // config, silently switching LaTeX's text encoding to IL2 during
+  // latexml-oxide format-dump generation. Perl's last-wins overwrite gets
+  // this right; the cache must agree with the real resolver.
+  let kpse = subprocess_kpse();
+  for name in ["fonttext.cfg", "fontmath.cfg", "hyphen.cfg", "article.cls"] {
+    if let Some(cli) = kpsewhich_cli(name) {
+      assert_eq!(
+        kpse.find_file(name).as_deref(),
+        Some(cli.as_str()),
+        "cache diverges from kpsewhich CLI for shadowed basename {name}"
+      );
+    }
+  }
+}
