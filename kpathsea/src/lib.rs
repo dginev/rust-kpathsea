@@ -1,11 +1,15 @@
+#![deny(missing_docs)]
+//! High-level Rust API for working with the kpathsea file-searching library for TeX
+
 use kpathsea_sys::*;
 use std::env::current_exe;
 use std::ffi::{CStr,CString};
 
-
+/// High-level interface struct for the kpathsea API
 pub struct Kpaths(kpathsea);
 
 impl Kpaths {
+  /// Obtain a new kpathsea struct, with metadata for the current rust executable
   pub fn new() -> Self {
     let kpse = unsafe { kpathsea_new() };
     let current_exe_path = current_exe().expect("we need the current executable's path, for kpathsea's bookkeeping");
@@ -15,6 +19,7 @@ impl Kpaths {
     Kpaths(kpse)
   }
 
+  /// Find a file base name, auto-completing with the standard TeX extensions if needed
   pub fn find_file(&self, name: &str) -> Option<String> {
     let c_name = CString::new(name).unwrap();
     let c_filename_buf = unsafe { kpathsea_find_file(
