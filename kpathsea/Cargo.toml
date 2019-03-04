@@ -1,0 +1,18 @@
+[package]
+name = "kpathsea"
+version = "0.1.0"
+authors = ["Deyan Ginev <deyan.ginev@gmail.com>"]
+edition = "2018"
+license = "MIT/Apache-2.0"
+repository = "https://github.com/dginev/rust-kpathsea"
+homepage = "https://github.com/dginev/rust-kpathsea"
+documentation = "https://docs.rs/rust-kpathsea"
+description = """
+Rust interface to the kpathsea TeX file management library.
+"""
+
+[lib]
+name = "kpathsea"
+
+[dependencies]
+kpathsea_sys = {version="0.1.0", path="../kpathsea_sys"}
