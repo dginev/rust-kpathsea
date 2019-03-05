@@ -1,3 +1,9 @@
+# Bits of note:
+# 1) you need a new pkg-config to pick up on the kpathsea.pc,
+#  so the xenial dist option is a must.
+# 2) you can use this wrapper with just libpathsea6 and likpathsea-dev, 
+#    but the truly *useful* tests are with detecting texlive-installed files,
+#    e.g. latex class and package files, hence the texlive dependency
 sudo: false
 dist: xenial
 language: rust
