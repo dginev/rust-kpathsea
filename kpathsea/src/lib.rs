@@ -2,20 +2,40 @@
 //! High-level Rust API for working with the kpathsea file-searching library for TeX
 
 use kpathsea_sys::*;
-use std::env::current_exe;
 use std::ffi::{CStr,CString};
+use which::which;
 
 /// High-level interface struct for the kpathsea API
 pub struct Kpaths(kpathsea);
+
+/// Returns the path to the kpsewhich executable on the system.
+fn get_kpsewhich_path() -> which::Result<CString> {
+  let kpsewhich_path = which("kpsewhich")?;
+  let kpsewhich_path_str = kpsewhich_path.to_string_lossy();
+  Ok(CString::new(kpsewhich_path_str.into_owned().as_str()).unwrap())
+}
 
 impl Kpaths {
   /// Obtain a new kpathsea struct, with metadata for the current rust executable
   pub fn new() -> Self {
     let kpse = unsafe { kpathsea_new() };
-    let current_exe_path = current_exe().expect("we need the current executable's path, for kpathsea's bookkeeping");
-    let mut current_exe_str = current_exe_path.to_string_lossy();
-    let program_name = CString::new(current_exe_str.to_mut().as_str()).unwrap();
-    unsafe { kpathsea_set_program_name(kpse, program_name.as_ptr(), program_name.as_ptr()); }
+
+    // kpathsea says we should pass in the current executable name to
+    // kpathsea_set_program_name, but there are cases where this causes
+    // kpathsea to fail to find the available TeX distribution. Instead, we use
+    // the location of the kpsewhich executable, which ensures that we find the
+    // correct TeX distribution.
+    let kpsewhich_path = get_kpsewhich_path()
+          .expect("kpsewhich must be available in your PATH to find the \
+                   installed TeX distribution");
+
+    unsafe {
+      kpathsea_set_program_name(
+        kpse,
+        kpsewhich_path.as_ptr(),
+        std::ptr::null()
+      )
+    }
     Kpaths(kpse)
   }
 
