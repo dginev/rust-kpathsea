@@ -1,6 +1,12 @@
 # Change Log
 
-## [0.1.4] (next target)
+## [0.2.1] (next target)
+
+## [0.2.0] 2019-04-11
+
+* More robust detection of the tex toolchain, as expected by the `kpathsea` C library
+   * making the wrapper more reliable to build and use cross-platform.
+   * Thanks @xymostech for tracking down and upgrading.
 
 ## [0.1.3] 2019-03-12
 

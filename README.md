@@ -10,12 +10,11 @@ Rust interface and wrapper for the [kpathsea library](https://ctan.org/pkg/kpath
 ### Example
 
 ```rust
-  let kpse = Kpaths::new();
+  let kpse = Kpaths::new()
+    .expect("You need a properly setup tex toolchain (texlive/MikTeX/...) and kpathsea headers, to use this wrapper.");
   if let Some(path) = kpse.find_file("article.cls") {
     assert!(path.ends_with("article.cls"), "Successfully found the full path of article.cls");
   } else {
-    "You need a properly setup kpathsea in your OS to use this wrapper, check your package manager."
+    panic!("A tex toolchain was found, but the search failed to detect a class file.");
   }
 ```
-
-
