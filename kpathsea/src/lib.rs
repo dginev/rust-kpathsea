@@ -5,19 +5,23 @@ use kpathsea_sys::*;
 use std::ffi::{CStr,CString};
 use which::which;
 
+/// External result type for handling library errors
+pub type Result<T> = std::result::Result<T, &'static str>;
+
 /// High-level interface struct for the kpathsea API
 pub struct Kpaths(kpathsea);
 
 /// Returns the path to the kpsewhich executable on the system.
-fn get_kpsewhich_path() -> which::Result<CString> {
-  let kpsewhich_path = which("kpsewhich")?;
+fn get_kpsewhich_path() -> Result<CString> {
+  let kpsewhich_path = which("kpsewhich")
+    .map_err(|_| "Error finding kpsewhich executable")?;
   let kpsewhich_path_str = kpsewhich_path.to_string_lossy();
   Ok(CString::new(kpsewhich_path_str.into_owned().as_str()).unwrap())
 }
 
 impl Kpaths {
   /// Obtain a new kpathsea struct, with metadata for the current rust executable
-  pub fn new() -> Self {
+  pub fn new() -> Result<Self> {
     let kpse = unsafe { kpathsea_new() };
 
     // kpathsea says we should pass in the current executable name to
@@ -25,9 +29,7 @@ impl Kpaths {
     // kpathsea to fail to find the available TeX distribution. Instead, we use
     // the location of the kpsewhich executable, which ensures that we find the
     // correct TeX distribution.
-    let kpsewhich_path = get_kpsewhich_path()
-          .expect("kpsewhich must be available in your PATH to find the \
-                   installed TeX distribution");
+    let kpsewhich_path = get_kpsewhich_path()?;
 
     unsafe {
       kpathsea_set_program_name(
@@ -36,7 +38,7 @@ impl Kpaths {
         std::ptr::null()
       )
     }
-    Kpaths(kpse)
+    Ok(Kpaths(kpse))
   }
 
   /// For a given filename, try to guess the kpse format type from the file
