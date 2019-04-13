@@ -47,8 +47,8 @@ impl Kpaths {
   fn guess_format_from_filename(&self, filename: &str) -> kpse_file_format_type {
     // We go through each format type
     for format_type in 0..kpse_file_format_type_kpse_last_format {
-      let format_info = unsafe { &(*self.0).format_info[format_type as usize] };
-
+      let format_info: &mut kpse_format_info_type =
+        unsafe { &mut (*self.0).format_info[format_type as usize] };
       if format_info.type_.is_null() {
         // If this format hasn't been initialized yet, initialize it now.
         // Otherwise, it won't have the list of suffixes initialized.
