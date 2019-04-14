@@ -1,6 +1,10 @@
 # Change Log
 
-## [0.2.1] (next target)
+## [0.2.2] (next target)
+
+## [0.2.1] 2019-04-14
+
+ * Fix bug in `guess_format_from_filename`
 
 ## [0.2.0] 2019-04-11
 
