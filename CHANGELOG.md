@@ -1,6 +1,11 @@
 # Change Log
 
-## [0.2.2] (next target)
+## [0.2.3] (next target)
+
+## [0.2.2] 2019-04-19
+
+ * `Drop` and `Send` traits implemented for `Kpaths`
+ * Welcome to @xymostech to the authors/owners team!
 
 ## [0.2.1] 2019-04-14
 
