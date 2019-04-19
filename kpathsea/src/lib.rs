@@ -11,6 +11,10 @@ pub type Result<T> = std::result::Result<T, &'static str>;
 /// High-level interface struct for the kpathsea API
 pub struct Kpaths(kpathsea);
 
+// A kpathsea pointer is Send because it owns the data that it references. It
+// is not Sync, because calling kpathsea functions on it is not thread-safe.
+unsafe impl Send for Kpaths {}
+
 /// Returns the path to the kpsewhich executable on the system.
 fn get_kpsewhich_path() -> Result<CString> {
   let kpsewhich_path = which("kpsewhich")
@@ -121,5 +125,12 @@ impl Kpaths {
     } else {
       None
     }
+  }
+}
+
+impl Drop for Kpaths {
+  /// Cleanup the kpathsea pointer in the destructor
+  fn drop(&mut self) {
+    unsafe { kpathsea_finish(self.0) };
   }
 }
