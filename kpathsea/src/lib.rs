@@ -74,7 +74,7 @@ impl Kpaths {
         // We check if the last suffix.len() characters of the filename are
         // equal to the suffix itself. If so, then we've found a type that
         // matches our filename!
-        if filename.get(filename.len()-suffix.len()..) == Some(suffix) {
+        if filename.len()>suffix.len() && filename.get(filename.len()-suffix.len()..) == Some(suffix) {
           return format_type as kpse_file_format_type;
         }
 
