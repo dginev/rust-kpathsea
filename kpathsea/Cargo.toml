@@ -15,7 +15,7 @@ Rust interface to the kpathsea TeX file management library.
 name = "kpathsea"
 
 [dependencies]
-kpathsea_sys = {version="0.1.0", path="../kpathsea_sys"}
+kpathsea_sys = {version="0.1.2", path="../kpathsea_sys"}
 which = "4.0.1"
 
 [package.metadata.docs.rs]
