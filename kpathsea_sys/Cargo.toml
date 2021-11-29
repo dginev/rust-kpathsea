@@ -1,8 +1,8 @@
 [package]
 name = "kpathsea_sys"
-version = "0.1.1"
+version = "0.1.2"
 authors = ["Deyan Ginev <deyan.ginev@gmail.com>"]
-edition = "2018"
+edition = "2021"
 links = "kpathsea"
 build = "build.rs"
 license = "MIT/Apache-2.0"
