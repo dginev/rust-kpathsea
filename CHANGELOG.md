@@ -1,6 +1,11 @@
 # Change Log
 
-## [0.2.3] (next target)
+## [0.2.4] (next target)
+
+## [0.2.3] 2021-11-29
+
+* Patch `guess_format_from_filename` for names shorter than suffixes, thanks @Jazzpirate
+* Update to 2021 rust edition, minor cleanup
 
 ## [0.2.2] 2019-04-19
 
