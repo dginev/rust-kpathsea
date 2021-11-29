@@ -2,7 +2,7 @@
 //! High-level Rust API for working with the kpathsea file-searching library for TeX
 
 use kpathsea_sys::*;
-use std::ffi::{CStr,CString};
+use std::ffi::{CStr, CString};
 use which::which;
 
 /// External result type for handling library errors
@@ -17,8 +17,7 @@ unsafe impl Send for Kpaths {}
 
 /// Returns the path to the kpsewhich executable on the system.
 fn get_kpsewhich_path() -> Result<CString> {
-  let kpsewhich_path = which("kpsewhich")
-    .map_err(|_| "Error finding kpsewhich executable")?;
+  let kpsewhich_path = which("kpsewhich").map_err(|_| "Error finding kpsewhich executable")?;
   let kpsewhich_path_str = kpsewhich_path.to_string_lossy();
   Ok(CString::new(kpsewhich_path_str.into_owned().as_str()).unwrap())
 }
@@ -35,13 +34,7 @@ impl Kpaths {
     // correct TeX distribution.
     let kpsewhich_path = get_kpsewhich_path()?;
 
-    unsafe {
-      kpathsea_set_program_name(
-        kpse,
-        kpsewhich_path.as_ptr(),
-        std::ptr::null()
-      )
-    }
+    unsafe { kpathsea_set_program_name(kpse, kpsewhich_path.as_ptr(), std::ptr::null()) }
     Ok(Kpaths(kpse))
   }
 
@@ -49,6 +42,10 @@ impl Kpaths {
   /// extension by looking it up in the format info table. This is a simplified
   /// version of the find_format function in kpsewhich.
   fn guess_format_from_filename(&self, filename: &str) -> kpse_file_format_type {
+    if !filename.contains('.') {
+      // no extension in filename, shorcircuit and default to tex
+      return kpse_file_format_type_kpse_tex_format;
+    }
     // We go through each format type
     for format_type in 0..kpse_file_format_type_kpse_last_format {
       let format_info: &mut kpse_format_info_type =
@@ -66,7 +63,7 @@ impl Kpaths {
       // value. Also, the pointer to the array can itself be null if there are
       // no suffixes.
       let mut suffix_ptr = format_info.suffix;
-      while !suffix_ptr.is_null() && !unsafe {*suffix_ptr}.is_null() {
+      while !suffix_ptr.is_null() && !unsafe { *suffix_ptr }.is_null() {
         // Pull out the suffix
         let suffix_cstr = unsafe { CStr::from_ptr(*suffix_ptr) };
         let suffix = suffix_cstr.to_str().unwrap();
@@ -74,7 +71,9 @@ impl Kpaths {
         // We check if the last suffix.len() characters of the filename are
         // equal to the suffix itself. If so, then we've found a type that
         // matches our filename!
-        if filename.len()>suffix.len() && filename.get(filename.len()-suffix.len()..) == Some(suffix) {
+        if filename.len() > suffix.len()
+          && filename.get(filename.len() - suffix.len()..) == Some(suffix)
+        {
           return format_type as kpse_file_format_type;
         }
 
@@ -86,11 +85,11 @@ impl Kpaths {
       // stored in the exact same way as the normal suffixes.
       // TODO(xymostech): factor this out into a function to avoid duplication
       let mut alt_suffix_ptr = format_info.alt_suffix;
-      while !alt_suffix_ptr.is_null() && !unsafe {*alt_suffix_ptr}.is_null() {
+      while !alt_suffix_ptr.is_null() && !unsafe { *alt_suffix_ptr }.is_null() {
         let alt_suffix_cstr = unsafe { CStr::from_ptr(*alt_suffix_ptr) };
         let alt_suffix = alt_suffix_cstr.to_str().unwrap();
 
-        if filename.get(filename.len()-alt_suffix.len()..) == Some(alt_suffix) {
+        if filename.get(filename.len() - alt_suffix.len()..) == Some(alt_suffix) {
           return format_type as kpse_file_format_type;
         }
 
@@ -107,17 +106,13 @@ impl Kpaths {
     let c_name = CString::new(name).unwrap();
 
     let file_format_type = self.guess_format_from_filename(name);
-    let c_filename_buf = unsafe { kpathsea_find_file(
-      self.0,
-      c_name.as_ptr(),
-      file_format_type,
-      0
-    )};
-    
+    let c_filename_buf =
+      unsafe { kpathsea_find_file(self.0, c_name.as_ptr(), file_format_type, 0) };
+
     if !c_filename_buf.is_null() {
       let c_filepath: &CStr = unsafe { CStr::from_ptr(c_filename_buf) };
       let filepath = c_filepath.to_str().unwrap().to_owned();
-      if filepath.is_empty() { 
+      if filepath.is_empty() {
         None
       } else {
         Some(filepath)
