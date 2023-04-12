@@ -11,9 +11,10 @@ pub type Result<T> = std::result::Result<T, &'static str>;
 /// High-level interface struct for the kpathsea API
 pub struct Kpaths(kpathsea);
 
-// A kpathsea pointer is Send because it owns the data that it references. It
-// is not Sync, because calling kpathsea functions on it is not thread-safe.
+// A kpathsea pointer is Send because it owns the data that it references.
 unsafe impl Send for Kpaths {}
+// It is *also* Sync, because there are no mutable functions in the interface.
+unsafe impl Sync for Kpaths {}
 
 /// Returns the path to the kpsewhich executable on the system.
 fn get_kpsewhich_path() -> Result<CString> {
