@@ -16,7 +16,7 @@ name = "kpathsea"
 
 [dependencies]
 kpathsea_sys = {version="0.1.2", path="../kpathsea_sys"}
-which = "5.0.0"
+which = "6.0.1"
 
 [package.metadata.docs.rs]
 rustc-args = ["--cfg",  "kpathsea_docs_rs"]
