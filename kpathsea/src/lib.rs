@@ -8,6 +8,30 @@ use which::which;
 /// External result type for handling library errors
 pub type Result<T> = std::result::Result<T, &'static str>;
 
+/// Re-export of the raw kpathsea format type, for callers of
+/// [`Kpaths::find_file_with_format`] that want to pass a known format.
+pub use kpathsea_sys::kpse_file_format_type as Format;
+
+/// Common kpathsea format constants, re-exported for convenience.
+/// The full set is available via the `kpathsea_sys` crate.
+pub mod formats {
+  use kpathsea_sys::*;
+  /// `.tex`, `.sty`, `.cls`, `.def`, `.ltx` and related source formats.
+  pub const TEX: kpse_file_format_type = kpse_file_format_type_kpse_tex_format;
+  /// `.bib` bibliography source
+  pub const BIB: kpse_file_format_type = kpse_file_format_type_kpse_bib_format;
+  /// `.bst` bibliography style
+  pub const BST: kpse_file_format_type = kpse_file_format_type_kpse_bst_format;
+  /// `.cnf` kpathsea config
+  pub const CNF: kpse_file_format_type = kpse_file_format_type_kpse_cnf_format;
+  /// Fontmap files
+  pub const FONTMAP: kpse_file_format_type = kpse_file_format_type_kpse_fontmap_format;
+  /// Type 1 (`.pfa`/`.pfb`) fonts
+  pub const TYPE1: kpse_file_format_type = kpse_file_format_type_kpse_type1_format;
+  /// TrueType fonts
+  pub const TRUETYPE: kpse_file_format_type = kpse_file_format_type_kpse_truetype_format;
+}
+
 /// High-level interface struct for the kpathsea API
 pub struct Kpaths(kpathsea);
 
@@ -103,11 +127,29 @@ impl Kpaths {
 
   /// Find a file base name, auto-completing with the standard TeX extensions if needed
   pub fn find_file(&self, name: &str) -> Option<String> {
+    let file_format_type = self.guess_format_from_filename(name);
+    self.find_file_with_format(name, file_format_type)
+  }
+
+  /// Find a file with a caller-supplied format, bypassing `guess_format_from_filename`.
+  ///
+  /// `guess_format_from_filename` walks every format type in the kpathsea format
+  /// info table and lazily initializes each one (via `kpathsea_init_format`)
+  /// before comparing suffixes. On a fresh `Kpaths` instance this parses all of
+  /// the relevant texmf config/db files, which in turn dominates profiles for
+  /// callers that know the format up front (e.g. a LaTeX frontend searching
+  /// only for `kpse_tex_format`). Prefer this method when you already know the
+  /// kpathsea format — it issues exactly one `kpathsea_find_file` call with no
+  /// format-table walk.
+  pub fn find_file_with_format(
+    &self,
+    name: &str,
+    format: kpse_file_format_type,
+  ) -> Option<String> {
     let c_name = CString::new(name).unwrap();
 
-    let file_format_type = self.guess_format_from_filename(name);
     let c_filename_buf =
-      unsafe { kpathsea_find_file(self.0, c_name.as_ptr(), file_format_type, 0) };
+      unsafe { kpathsea_find_file(self.0, c_name.as_ptr(), format, 0) };
 
     if !c_filename_buf.is_null() {
       let c_filepath: &CStr = unsafe { CStr::from_ptr(c_filename_buf) };
