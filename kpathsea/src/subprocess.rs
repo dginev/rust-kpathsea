@@ -36,6 +36,21 @@ use std::sync::{Arc, LazyLock, Mutex, MutexGuard, OnceLock, PoisonError};
 /// The kpathsea path-list separator (Perl `$KPATHSEP`).
 const KPATHSEP: char = if cfg!(windows) { ';' } else { ':' };
 
+/// On Windows, kpathsea lowercases DOS drive letters in every path it
+/// *resolves* (`d:/texlive/...`), but `--expand-var`/`--show-path` output
+/// keeps whatever case the installation configured (`D:/texlive/...`).
+/// Cache entries are built from the latter; normalize them the way
+/// kpathsea would, so a cache hit and a direct `kpsewhich` call return
+/// byte-identical strings for the same file. (Divergence caught by the
+/// Windows CI agreement tests.) No-op off Windows and on driveless paths.
+fn normalize_drive_letter(path: &mut String) {
+  let bytes = path.as_bytes();
+  if cfg!(windows) && bytes.len() >= 2 && bytes[1] == b':' && bytes[0].is_ascii_uppercase() {
+    let lower = (bytes[0] as char).to_ascii_lowercase().to_string();
+    path.replace_range(..1, &lower);
+  }
+}
+
 /// Basename → first-wins path, from the TeX tree's `ls-R` databases.
 type LsRCache = HashMap<String, String>;
 
@@ -270,6 +285,7 @@ fn build_kpse_cache(kpsewhich: &Path) -> HashMap<String, String> {
     while path.ends_with("//") {
       path.pop();
     }
+    normalize_drive_letter(&mut path);
     if !path.is_empty() && Path::new(&path).is_dir() {
       filters.push(path);
     }
@@ -296,8 +312,9 @@ fn build_kpse_cache(kpsewhich: &Path) -> HashMap<String, String> {
   // module docs — no `ls-R`-order tie-break matches kpathsea's ranking).
   let mut ambiguous: std::collections::HashSet<String> = std::collections::HashSet::new();
   for dir in texmf.split(',') {
-    let dir = dir.trim().trim_start_matches("!!");
-    let lsr_path = Path::new(dir).join("ls-R");
+    let mut dir = dir.trim().trim_start_matches("!!").to_string();
+    normalize_drive_letter(&mut dir);
+    let lsr_path = Path::new(&dir).join("ls-R");
     // Presumably if no ls-R, we can ignore the directory?
     let Ok(lsr) = std::fs::read_to_string(&lsr_path) else {
       continue;
@@ -331,4 +348,18 @@ fn build_kpse_cache(kpsewhich: &Path) -> HashMap<String, String> {
     cache.remove(name);
   }
   cache
+}
+
+#[cfg(all(test, windows))]
+mod tests {
+  #[test]
+  fn drive_letters_normalize_to_lowercase() {
+    let mut p = String::from("D:/texlive/2026/texmf-dist");
+    super::normalize_drive_letter(&mut p);
+    assert_eq!(p, "d:/texlive/2026/texmf-dist");
+    // Driveless paths are untouched.
+    let mut rel = String::from("texmf-dist");
+    super::normalize_drive_letter(&mut rel);
+    assert_eq!(rel, "texmf-dist");
+  }
 }

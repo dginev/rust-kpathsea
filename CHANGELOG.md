@@ -52,6 +52,10 @@ Backends:
     `kpsewhich` executable — as Perl's `$kpse_cache` always was.
     (Per-instance copies were ~50MB each on a full TeX Live, multiplied
     by every live instance; shared, it is one ~50MB cache total.)
+  * on Windows, DOS drive letters in cache results are normalized to
+    lowercase, matching kpathsea's own resolved-path normalization —
+    cache hits and direct `kpsewhich` calls return byte-identical
+    strings for the same file (caught by Windows CI).
   * direct-call outcomes (hits and misses) are memoized alongside the
     cache, process-wide per executable: re-probing the same absent name
     never costs a second process spawn, even from another thread's
