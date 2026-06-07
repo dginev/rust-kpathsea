@@ -17,30 +17,34 @@ use std::env;
 ///     high-level `kpathsea` crate reads the `linked` metadata below and
 ///     falls back to its subprocess-`kpsewhich` backend automatically.
 fn main() {
-    println!("cargo:rerun-if-env-changed=KPATHSEA_LIB_DIR");
-    println!("cargo:rustc-check-cfg=cfg(kpathsea_linked)");
+  println!("cargo:rerun-if-env-changed=KPATHSEA_LIB_DIR");
+  println!("cargo:rustc-check-cfg=cfg(kpathsea_linked)");
 
-    if let Ok(dir) = env::var("KPATHSEA_LIB_DIR") {
-        println!("cargo:rustc-link-search=native={dir}");
-        println!("cargo:rustc-link-lib=kpathsea");
-        println!("cargo:rustc-cfg=kpathsea_linked");
-        // `links = "kpathsea"` exports this to dependents as DEP_KPATHSEA_LINKED.
-        println!("cargo:linked=1");
-        return;
-    }
+  if let Ok(dir) = env::var("KPATHSEA_LIB_DIR") {
+    println!("cargo:rustc-link-search=native={dir}");
+    println!("cargo:rustc-link-lib=kpathsea");
+    emit_linked();
+    return;
+  }
 
-    if find_library("kpathsea").is_ok() {
-        // pkg-config has already emitted the link-search/link-lib directives.
-        println!("cargo:rustc-cfg=kpathsea_linked");
-        println!("cargo:linked=1");
-        return;
-    }
+  if find_library("kpathsea").is_ok() {
+    // pkg-config has already emitted the link-search/link-lib directives.
+    emit_linked();
+    return;
+  }
 
-    println!(
-        "cargo:warning=kpathsea_sys: libkpathsea not found (no pkg-config entry, \
+  println!(
+    "cargo:warning=kpathsea_sys: libkpathsea not found (no pkg-config entry, \
          no KPATHSEA_LIB_DIR); building without linking. In-process kpathsea \
          calls are unavailable - the `kpathsea` crate will use its \
          subprocess-`kpsewhich` backend instead."
-    );
-    println!("cargo:linked=0");
+  );
+  println!("cargo:linked=0");
+}
+
+/// Mark this build as linked: the in-crate cfg, and — via `links =
+/// "kpathsea"` — the `DEP_KPATHSEA_LINKED` metadata read by dependents.
+fn emit_linked() {
+  println!("cargo:rustc-cfg=kpathsea_linked");
+  println!("cargo:linked=1");
 }

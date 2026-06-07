@@ -15,7 +15,11 @@ fn kpsewhich_cli(name: &str) -> Option<String> {
   let out = Command::new("kpsewhich").arg(name).output().ok()?;
   let s = String::from_utf8_lossy(&out.stdout);
   let line = s.lines().next()?.trim();
-  if line.is_empty() { None } else { Some(line.to_string()) }
+  if line.is_empty() {
+    None
+  } else {
+    Some(line.to_string())
+  }
 }
 
 #[test]
@@ -79,4 +83,27 @@ fn degenerate_names_do_not_panic() {
   // panic on these in guess_format_from_filename (debug overflow).
   let _ = kpse.find_file(".sty");
   let _ = kpse.find_file("");
+}
+
+#[test]
+fn option_like_names_are_not_passed_to_kpsewhich() {
+  // Candidate names beginning with `-` would be parsed as kpsewhich
+  // options; the backend drops them instead.
+  let kpse = subprocess_kpse();
+  assert_eq!(kpse.find_file("--version"), None);
+  assert_eq!(kpse.find_first(&["-progname=latex", "--help"]), None);
+  // ... while remaining candidates are still resolved.
+  let path = kpse
+    .find_first(&["--help", "article.cls"])
+    .expect("find_first failed");
+  assert!(path.ends_with("article.cls"));
+}
+
+#[test]
+fn bogus_kpsewhich_path_degrades_to_none() {
+  // An explicit executable path is not validated up front; lookups just
+  // come back empty (both the ls-R cache build and the direct call fail).
+  let kpse = Kpaths::with_kpsewhich("/definitely/not/a/real/kpsewhich");
+  assert!(!kpse.is_in_process());
+  assert_eq!(kpse.find_file("article.cls"), None);
 }

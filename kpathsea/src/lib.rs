@@ -20,8 +20,7 @@
 use kpathsea_sys::*;
 #[cfg(kpathsea_linked)]
 use std::ffi::{CStr, CString};
-#[cfg(kpathsea_linked)]
-use which::which;
+use std::path::PathBuf;
 
 mod subprocess;
 use subprocess::SubprocessKpse;
@@ -58,22 +57,15 @@ pub mod formats {
 /// plain lookup (kpsewhich then guesses from the suffix, like
 /// [`Kpaths::find_file`]).
 fn kpsewhich_format_name(format: Format) -> Option<&'static str> {
-  if format == formats::TEX {
-    Some("tex")
-  } else if format == formats::BIB {
-    Some("bib")
-  } else if format == formats::BST {
-    Some("bst")
-  } else if format == formats::CNF {
-    Some("cnf")
-  } else if format == formats::FONTMAP {
-    Some("map")
-  } else if format == formats::TYPE1 {
-    Some("type1 fonts")
-  } else if format == formats::TRUETYPE {
-    Some("truetype fonts")
-  } else {
-    None
+  match format {
+    formats::TEX => Some("tex"),
+    formats::BIB => Some("bib"),
+    formats::BST => Some("bst"),
+    formats::CNF => Some("cnf"),
+    formats::FONTMAP => Some("map"),
+    formats::TYPE1 => Some("type1 fonts"),
+    formats::TRUETYPE => Some("truetype fonts"),
+    _ => None,
   }
 }
 
@@ -91,12 +83,89 @@ pub struct Kpaths(Backend);
 // (The subprocess backend is inherently Send.)
 unsafe impl Send for Kpaths {}
 
-/// Returns the path to the kpsewhich executable on the system.
+/// Resolve the `kpsewhich` executable: the `KPSEWHICH` env var when set
+/// (a bare name is looked up through PATH, an absolute path is taken as-is),
+/// otherwise `kpsewhich` on PATH. Both backends anchor on this executable —
+/// in-process as the program name handed to `kpathsea_set_program_name`,
+/// subprocess as the resolver to invoke.
+fn kpsewhich_executable() -> Result<PathBuf> {
+  let name = std::env::var("KPSEWHICH").unwrap_or_else(|_| "kpsewhich".to_string());
+  which::which(&name).map_err(|_| "Error finding kpsewhich executable")
+}
+
+/// [`kpsewhich_executable`] as a `CString`, for `kpathsea_set_program_name`.
 #[cfg(kpathsea_linked)]
 fn get_kpsewhich_path() -> Result<CString> {
-  let kpsewhich_path = which("kpsewhich").map_err(|_| "Error finding kpsewhich executable")?;
-  let kpsewhich_path_str = kpsewhich_path.to_string_lossy();
-  Ok(CString::new(kpsewhich_path_str.into_owned().as_str()).unwrap())
+  let kpsewhich_path = kpsewhich_executable()?;
+  CString::new(kpsewhich_path.to_string_lossy().into_owned())
+    .map_err(|_| "kpsewhich path contains a NUL byte")
+}
+
+/// libkpathsea's `kpse_set_program_name` mutates process-global state:
+/// static path buffers and the environment via `putenv`. Two threads
+/// constructing `Kpaths` concurrently interleave those buffers and crash
+/// libkpathsea ("Can't get directory of program name", with garbled paths —
+/// observed under parallel `cargo test`). Construction and (defensively)
+/// teardown are serialized behind this lock; lookups on an existing
+/// instance are unaffected.
+#[cfg(kpathsea_linked)]
+static KPSE_GLOBAL_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+/// Walk a NULL-terminated C array of suffix strings (the layout kpathsea
+/// uses for `format_info.suffix` and `format_info.alt_suffix`; the array
+/// pointer itself may be NULL when a format has no suffixes), returning
+/// `true` when `filename` ends with one of them. The filename must be
+/// strictly longer than the suffix: a bare extension with an empty stem
+/// (e.g. `.sty`) matches nothing, so it falls through to the default
+/// format instead.
+///
+/// # Safety
+/// `list` must be NULL or point to a NULL-terminated array of valid
+/// NUL-terminated C strings.
+#[cfg(kpathsea_linked)]
+unsafe fn filename_has_suffix_in(filename: &str, mut list: *mut const_string) -> bool {
+  while !list.is_null() && !unsafe { *list }.is_null() {
+    let suffix = unsafe { CStr::from_ptr(*list) }.to_str().unwrap();
+    if filename.len() > suffix.len() && filename.ends_with(suffix) {
+      return true;
+    }
+    list = unsafe { list.offset(1) };
+  }
+  false
+}
+
+/// For a given filename, try to guess the kpse format type from the file
+/// extension by looking it up in the format info table. This is a simplified
+/// version of the find_format function in kpsewhich.
+#[cfg(kpathsea_linked)]
+fn guess_format_from_filename(kpse: kpathsea, filename: &str) -> kpse_file_format_type {
+  if !filename.contains('.') {
+    // no extension in filename, shorcircuit and default to tex
+    return kpse_file_format_type_kpse_tex_format;
+  }
+  // We go through each format type
+  for format_type in 0..kpse_file_format_type_kpse_last_format {
+    let format_info: &mut kpse_format_info_type =
+      unsafe { &mut (*kpse).format_info[format_type as usize] };
+    if format_info.type_.is_null() {
+      // If this format hasn't been initialized yet, initialize it now.
+      // Otherwise, it won't have the list of suffixes initialized.
+      unsafe {
+        kpathsea_init_format(kpse, format_type as kpse_file_format_type);
+      }
+    }
+
+    // Check the suffixes, then the alternate suffixes, for this format
+    // type. If the filename ends with one of them, we've found our format.
+    if unsafe { filename_has_suffix_in(filename, format_info.suffix) }
+      || unsafe { filename_has_suffix_in(filename, format_info.alt_suffix) }
+    {
+      return format_type as kpse_file_format_type;
+    }
+  }
+
+  // If we don't find any matching suffixes, we guess that it's a tex file
+  kpse_file_format_type_kpse_tex_format
 }
 
 impl Kpaths {
@@ -108,8 +177,6 @@ impl Kpaths {
   pub fn new() -> Result<Self> {
     #[cfg(kpathsea_linked)]
     {
-      let kpse = unsafe { kpathsea_new() };
-
       // kpathsea says we should pass in the current executable name to
       // kpathsea_set_program_name, but there are cases where this causes
       // kpathsea to fail to find the available TeX distribution. Instead, we use
@@ -117,6 +184,11 @@ impl Kpaths {
       // correct TeX distribution.
       let kpsewhich_path = get_kpsewhich_path()?;
 
+      // Serialized: see KPSE_GLOBAL_LOCK.
+      let _guard = KPSE_GLOBAL_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+      let kpse = unsafe { kpathsea_new() };
       unsafe { kpathsea_set_program_name(kpse, kpsewhich_path.as_ptr(), std::ptr::null()) }
       Ok(Kpaths(Backend::InProcess(kpse)))
     }
@@ -136,9 +208,13 @@ impl Kpaths {
   }
 
   /// Like [`Kpaths::new_subprocess`], with an explicit path to the
-  /// `kpsewhich` executable (bypassing `KPSEWHICH`/PATH lookup).
-  pub fn with_kpsewhich<P: Into<std::path::PathBuf>>(path: P) -> Self {
-    Kpaths(Backend::Subprocess(SubprocessKpse::with_kpsewhich(path.into())))
+  /// `kpsewhich` executable (bypassing `KPSEWHICH`/PATH lookup). The path is
+  /// not validated up front; a missing executable simply makes every lookup
+  /// return `None`.
+  pub fn with_kpsewhich<P: Into<PathBuf>>(path: P) -> Self {
+    Kpaths(Backend::Subprocess(SubprocessKpse::with_kpsewhich(
+      path.into(),
+    )))
   }
 
   /// `true` when this instance calls `libkpathsea` in-process, `false`
@@ -152,83 +228,14 @@ impl Kpaths {
     }
   }
 
-  /// For a given filename, try to guess the kpse format type from the file
-  /// extension by looking it up in the format info table. This is a simplified
-  /// version of the find_format function in kpsewhich.
-  #[cfg(kpathsea_linked)]
-  fn guess_format_from_filename(&self, kpse: kpathsea, filename: &str) -> kpse_file_format_type {
-    if !filename.contains('.') {
-      // no extension in filename, shorcircuit and default to tex
-      return kpse_file_format_type_kpse_tex_format;
-    }
-    // We go through each format type
-    for format_type in 0..kpse_file_format_type_kpse_last_format {
-      let format_info: &mut kpse_format_info_type =
-        unsafe { &mut (*kpse).format_info[format_type as usize] };
-      if format_info.type_.is_null() {
-        // If this format hasn't been initialized yet, initialize it now.
-        // Otherwise, it won't have the list of suffixes initialized.
-        unsafe {
-          kpathsea_init_format(kpse, format_type as kpse_file_format_type);
-        }
-      }
-
-      // First, we check the suffixes for each format type. The suffixes are
-      // stored as an array of strings with a null pointer denoting the last
-      // value. Also, the pointer to the array can itself be null if there are
-      // no suffixes.
-      let mut suffix_ptr = format_info.suffix;
-      while !suffix_ptr.is_null() && !unsafe { *suffix_ptr }.is_null() {
-        // Pull out the suffix
-        let suffix_cstr = unsafe { CStr::from_ptr(*suffix_ptr) };
-        let suffix = suffix_cstr.to_str().unwrap();
-
-        // We check if the last suffix.len() characters of the filename are
-        // equal to the suffix itself. If so, then we've found a type that
-        // matches our filename!
-        if filename.len() > suffix.len()
-          && filename.get(filename.len() - suffix.len()..) == Some(suffix)
-        {
-          return format_type as kpse_file_format_type;
-        }
-
-        // Go to the next suffix in the array.
-        suffix_ptr = unsafe { suffix_ptr.offset(1) };
-      }
-
-      // Next, we check the alternate suffixes for each format type. This is
-      // stored in the exact same way as the normal suffixes.
-      // TODO(xymostech): factor this out into a function to avoid duplication
-      let mut alt_suffix_ptr = format_info.alt_suffix;
-      while !alt_suffix_ptr.is_null() && !unsafe { *alt_suffix_ptr }.is_null() {
-        let alt_suffix_cstr = unsafe { CStr::from_ptr(*alt_suffix_ptr) };
-        let alt_suffix = alt_suffix_cstr.to_str().unwrap();
-
-        // The same length guard as the suffix loop above: without it, a
-        // filename shorter than the alt-suffix (e.g. looking up a bare
-        // `.sty`) underflows the subtraction and panics in debug builds.
-        if filename.len() > alt_suffix.len()
-          && filename.get(filename.len() - alt_suffix.len()..) == Some(alt_suffix)
-        {
-          return format_type as kpse_file_format_type;
-        }
-
-        alt_suffix_ptr = unsafe { alt_suffix_ptr.offset(1) };
-      }
-    }
-
-    // If we don't find any matching suffixes, we guess that it's a tex file
-    kpse_file_format_type_kpse_tex_format
-  }
-
   /// Find a file base name, auto-completing with the standard TeX extensions if needed
   pub fn find_file(&self, name: &str) -> Option<String> {
     match &self.0 {
       #[cfg(kpathsea_linked)]
       Backend::InProcess(kpse) => {
-        let file_format_type = self.guess_format_from_filename(*kpse, name);
+        let file_format_type = guess_format_from_filename(*kpse, name);
         self.find_file_with_format(name, file_format_type)
-      },
+      }
       Backend::Subprocess(sub) => sub.find_first(&[name]),
     }
   }
@@ -258,25 +265,33 @@ impl Kpaths {
   /// kpathsea format — it issues exactly one `kpathsea_find_file` call with no
   /// format-table walk.
   ///
-  /// With the subprocess backend, formats from [`formats`] are passed as
-  /// `kpsewhich --format=NAME`; other format values fall back to a plain
-  /// lookup.
+  /// With the subprocess backend the `ls-R` cache is consulted first, like
+  /// [`Kpaths::find_file`]; on a cache miss, formats from [`formats`] are
+  /// passed as `kpsewhich --format=NAME`, and other format values fall back
+  /// to a plain lookup.
+  ///
+  /// Names containing an interior NUL byte cannot exist in a TeX tree and
+  /// resolve to `None`.
   pub fn find_file_with_format(&self, name: &str, format: kpse_file_format_type) -> Option<String> {
     match &self.0 {
       #[cfg(kpathsea_linked)]
       Backend::InProcess(kpse) => {
-        let c_name = CString::new(name).unwrap();
+        let c_name = CString::new(name).ok()?;
 
         let c_filename_buf = unsafe { kpathsea_find_file(*kpse, c_name.as_ptr(), format, 0) };
 
         if !c_filename_buf.is_null() {
           let c_filepath: &CStr = unsafe { CStr::from_ptr(c_filename_buf) };
           let filepath = c_filepath.to_str().unwrap().to_owned();
-          if filepath.is_empty() { None } else { Some(filepath) }
+          if filepath.is_empty() {
+            None
+          } else {
+            Some(filepath)
+          }
         } else {
           None
         }
-      },
+      }
       Backend::Subprocess(sub) => sub.find_with_format_name(name, kpsewhich_format_name(format)),
     }
   }
@@ -287,8 +302,14 @@ impl Drop for Kpaths {
   fn drop(&mut self) {
     match &self.0 {
       #[cfg(kpathsea_linked)]
-      Backend::InProcess(kpse) => unsafe { kpathsea_finish(*kpse) },
-      Backend::Subprocess(_) => {},
+      Backend::InProcess(kpse) => {
+        // Serialized: see KPSE_GLOBAL_LOCK.
+        let _guard = KPSE_GLOBAL_LOCK
+          .lock()
+          .unwrap_or_else(std::sync::PoisonError::into_inner);
+        unsafe { kpathsea_finish(*kpse) }
+      }
+      Backend::Subprocess(_) => {}
     }
   }
 }

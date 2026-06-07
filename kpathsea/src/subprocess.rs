@@ -23,15 +23,16 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::sync::Mutex;
+use std::sync::OnceLock;
 
 /// The kpathsea path-list separator (Perl `$KPATHSEP`).
 const KPATHSEP: char = if cfg!(windows) { ';' } else { ':' };
 
 pub(crate) struct SubprocessKpse {
   kpsewhich: PathBuf,
-  /// `None` until the first lookup builds it (Perl: `$kpse_cache`).
-  cache: Mutex<Option<HashMap<String, String>>>,
+  /// Built lazily by the first lookup (Perl: `$kpse_cache`); reads are
+  /// lock-free afterwards.
+  cache: OnceLock<HashMap<String, String>>,
 }
 
 impl SubprocessKpse {
@@ -39,57 +40,87 @@ impl SubprocessKpse {
   /// it is a bare name, mirroring Perl's `which($ENV{...} || 'kpsewhich')`),
   /// then PATH.
   pub(crate) fn new() -> crate::Result<Self> {
-    let name = std::env::var("KPSEWHICH").unwrap_or_else(|_| "kpsewhich".to_string());
-    let kpsewhich = which::which(&name).map_err(|_| "Error finding kpsewhich executable")?;
-    Ok(SubprocessKpse { kpsewhich, cache: Mutex::new(None) })
+    Ok(SubprocessKpse {
+      kpsewhich: crate::kpsewhich_executable()?,
+      cache: OnceLock::new(),
+    })
   }
 
   /// Use an explicit `kpsewhich` executable path, bypassing PATH lookup.
   pub(crate) fn with_kpsewhich(path: PathBuf) -> Self {
-    SubprocessKpse { kpsewhich: path, cache: Mutex::new(None) }
+    SubprocessKpse {
+      kpsewhich: path,
+      cache: OnceLock::new(),
+    }
+  }
+
+  /// The `ls-R` cache, built on first use (one `kpsewhich` invocation plus
+  /// a read of each `ls-R` database under `$TEXMF`).
+  fn cache(&self) -> &HashMap<String, String> {
+    self.cache.get_or_init(|| build_kpse_cache(&self.kpsewhich))
+  }
+
+  /// The first candidate with an `ls-R` cache entry, if any.
+  fn cache_lookup(&self, candidates: &[&str]) -> Option<String> {
+    let cache = self.cache();
+    candidates.iter().find_map(|c| cache.get(*c).cloned())
   }
 
   /// Port of Perl `pathname_kpsewhich(@candidates)`: consult the `ls-R`
   /// cache first; on a full miss, issue ONE direct `kpsewhich` call with
   /// all candidates and take the first result line.
   pub(crate) fn find_first(&self, candidates: &[&str]) -> Option<String> {
-    if candidates.is_empty() {
-      return None;
-    }
-    {
-      let mut guard = self.cache.lock().unwrap();
-      let cache = guard.get_or_insert_with(|| build_kpse_cache(&self.kpsewhich));
-      for candidate in candidates {
-        if let Some(hit) = cache.get(*candidate) {
-          return Some(hit.clone());
-        }
-      }
+    if let Some(hit) = self.cache_lookup(candidates) {
+      return Some(hit);
     }
     // "If we've failed to read the cache, try directly calling kpsewhich.
     //  For multiple calls, this is slower in general. But MiKTeX, eg.,
     //  doesn't use texmf ls-R files!" (Pathname.pm)
-    self.run_kpsewhich(candidates)
+    self.run_kpsewhich(&[], candidates)
   }
 
-  /// Find with an explicit `kpsewhich --format=NAME`, when the caller's
-  /// kpse format constant has a known CLI name; otherwise fall back to a
-  /// plain lookup (kpsewhich guesses from the suffix, like `find_file`).
+  /// Format-typed lookup. The `ls-R` cache is consulted first, exactly like
+  /// [`Self::find_first`] — an exact-basename hit is what `kpsewhich` would
+  /// return for any format that can match the name's suffix. The format only
+  /// shapes the fallback: on a cache miss it is passed as
+  /// `kpsewhich --format=NAME` (enabling kpsewhich's suffix auto-completion
+  /// for that format); with no known CLI name the fallback is a plain lookup
+  /// (kpsewhich then guesses from the suffix, like `find_file`).
   pub(crate) fn find_with_format_name(
     &self,
     name: &str,
     format_name: Option<&str>,
   ) -> Option<String> {
+    if let Some(hit) = self.cache_lookup(&[name]) {
+      return Some(hit);
+    }
     match format_name {
-      Some(fmt) => self.run_kpsewhich(&[&format!("--format={fmt}"), name]),
-      None => self.find_first(&[name]),
+      Some(fmt) => self.run_kpsewhich(&[&format!("--format={fmt}")], &[name]),
+      None => self.run_kpsewhich(&[], &[name]),
     }
   }
 
-  /// One direct `kpsewhich` invocation. First stdout line wins; the exit
-  /// status is deliberately ignored (kpsewhich exits non-zero when ANY
-  /// candidate is missing — usually only one of them exists).
-  fn run_kpsewhich(&self, args: &[&str]) -> Option<String> {
-    let out = Command::new(&self.kpsewhich).args(args).output().ok()?;
+  /// One direct `kpsewhich` invocation: `flags` first, then candidate
+  /// `names`. Names beginning with `-` are dropped rather than relying on
+  /// `--` end-of-options support across kpsewhich reimplementations —
+  /// kpsewhich would otherwise parse them as options. First stdout line
+  /// wins; the exit status is deliberately ignored (kpsewhich exits
+  /// non-zero when ANY candidate is missing — usually only one of them
+  /// exists).
+  fn run_kpsewhich(&self, flags: &[&str], names: &[&str]) -> Option<String> {
+    let names: Vec<&str> = names
+      .iter()
+      .copied()
+      .filter(|n| !n.starts_with('-'))
+      .collect();
+    if names.is_empty() {
+      return None;
+    }
+    let out = Command::new(&self.kpsewhich)
+      .args(flags)
+      .args(&names)
+      .output()
+      .ok()?;
     let stdout = String::from_utf8_lossy(&out.stdout);
     let first = stdout.lines().map(str::trim).find(|l| !l.is_empty())?;
     Some(first.to_string())

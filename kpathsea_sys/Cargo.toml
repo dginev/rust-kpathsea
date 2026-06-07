@@ -20,9 +20,9 @@ name = "kpathsea_sys"
 [build-dependencies]
 pkg-config = "0.3"
 
-[lints.rust]
-unexpected_cfgs = { level = "warn", check-cfg = ['cfg(kpathsea_linked)'] }
-
+# `cfg(kpathsea_linked)` is registered via `cargo:rustc-check-cfg` in
+# build.rs, next to where the cfg itself is emitted.
+#
 # No docs.rs cfg override needed anymore: the build script no longer panics
 # when libkpathsea is absent, so docs.rs builds (which have no TeX) work
 # out of the box in the unlinked configuration.

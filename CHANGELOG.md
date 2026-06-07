@@ -21,8 +21,17 @@ Backends:
 * New API: `Kpaths::new_subprocess()`, `Kpaths::with_kpsewhich(path)`,
   `Kpaths::find_first(&[candidates])` (one subprocess call for a whole
   candidate list on cache miss), `Kpaths::is_in_process()`.
-* `KPSEWHICH` env var overrides the executable used by the subprocess
-  backend (resolved through PATH when a bare name).
+* `KPSEWHICH` env var overrides the `kpsewhich` executable both backends
+  anchor on (resolved through PATH when a bare name): the subprocess
+  backend invokes it, the in-process backend hands it to
+  `kpathsea_set_program_name`.
+* Subprocess-backend behavior notes:
+  * `find_file_with_format` consults the `ls-R` cache before shelling out,
+    exactly like `find_file`; `--format=NAME` only shapes the fallback
+    `kpsewhich` call on a cache miss — so the "fast path" guidance from
+    0.2.5 holds on both backends.
+  * candidate names beginning with `-` are never passed to `kpsewhich`
+    (they would be parsed as options) and simply resolve to `None`.
 
 kpathsea_sys 0.2.0:
 
@@ -42,7 +51,14 @@ Fixes:
   length guard as the suffix loop; bare-extension lookups (a `.sty` with
   an empty stem) no longer panic with a subtraction overflow in debug
   builds. (Previously tracked downstream in latexml-oxide as a
-  catch_unwind workaround.)
+  catch_unwind workaround. The two suffix loops are now one helper.)
+* Concurrent `Kpaths::new()` calls no longer crash the process:
+  libkpathsea's `kpse_set_program_name` mutates process-global state
+  (static path buffers, `putenv`), so the in-process backend serializes
+  construction/teardown behind a static lock. (Observed as garbled
+  `lstat(...) failed` aborts under parallel `cargo test`.)
+* Lookups of names containing an interior NUL byte return `None` instead
+  of panicking in `CString::new`.
 
 ## [0.2.6] (skipped — superseded by 0.3.0)
 

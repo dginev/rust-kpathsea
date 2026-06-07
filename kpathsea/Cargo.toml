@@ -3,7 +3,6 @@ name = "kpathsea"
 version = "0.3.0"
 authors = ["Deyan Ginev <deyan.ginev@gmail.com>", "Emily Eisenberg <xymostech@gmail.com>"]
 edition = "2024"
-build = "build.rs"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/dginev/rust-kpathsea"
 homepage = "https://github.com/dginev/rust-kpathsea"
@@ -19,9 +18,9 @@ name = "kpathsea"
 kpathsea_sys = { version = "0.2.0", path = "../kpathsea_sys" }
 which = "8"
 
-[lints.rust]
-unexpected_cfgs = { level = "warn", check-cfg = ['cfg(kpathsea_linked)'] }
-
+# `cfg(kpathsea_linked)` is registered via `cargo:rustc-check-cfg` in
+# build.rs, next to where the cfg itself is emitted.
+#
 # No docs.rs cfg override needed anymore: kpathsea_sys no longer panics
 # when libkpathsea is absent, so docs.rs builds (which have no TeX) work
 # out of the box — the crate then documents the subprocess configuration.
