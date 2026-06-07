@@ -27,8 +27,13 @@ The `KPSEWHICH` env var overrides the `kpsewhich` executable both backends
 anchor on (the subprocess backend invokes it; the in-process backend uses
 its location to find the right TeX distribution).
 
-The build never fails for lack of `libkpathsea`; `Kpaths::is_in_process()`
-reports which backend you got.
+The build never fails for lack of `libkpathsea` alone; `Kpaths::is_in_process()`
+reports which backend you got. It **does** fail — at install time, with the
+remedies spelled out — when *neither* backend is possible: no library to link
+against and no `kpsewhich` to delegate to. The check is skipped on docs.rs and
+when cross-compiling (the build host's PATH says nothing about the target);
+set `KPATHSEA_SKIP_TOOLCHAIN_CHECK=1` to skip it explicitly, e.g. when
+building on a machine without TeX for deployment to one with it.
 
 ### Example
 

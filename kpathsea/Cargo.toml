@@ -18,6 +18,11 @@ name = "kpathsea"
 kpathsea_sys = { version = "0.2.0", path = "../kpathsea_sys" }
 which = "8"
 
+[build-dependencies]
+# The install-time toolchain check resolves `kpsewhich` with the same
+# per-platform PATH rules as the runtime (PATHEXT/.exe on Windows).
+which = "8"
+
 # `cfg(kpathsea_linked)` is registered via `cargo:rustc-check-cfg` in
 # build.rs, next to where the cfg itself is emitted.
 #

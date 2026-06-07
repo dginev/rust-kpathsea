@@ -25,6 +25,13 @@ Backends:
   anchor on (resolved through PATH when a bare name): the subprocess
   backend invokes it, the in-process backend hands it to
   `kpathsea_set_program_name`.
+* The build **fails at install time when neither backend is possible** —
+  no `libkpathsea` to link against AND no `kpsewhich` to delegate to —
+  with the remedies spelled out, instead of compiling a crate that can
+  never resolve a file. The probe uses the same per-platform PATH rules
+  as the runtime (`which` crate: PATHEXT/`.exe` on Windows). Skipped
+  automatically on docs.rs and when cross-compiling; skipped explicitly
+  via `KPATHSEA_SKIP_TOOLCHAIN_CHECK=1` (build-here-deploy-there setups).
 * Subprocess-backend behavior notes:
   * `find_file_with_format` consults the `ls-R` cache before shelling out,
     exactly like `find_file`; `--format=NAME` only shapes the fallback
