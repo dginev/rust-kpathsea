@@ -41,7 +41,7 @@ jobs:
     name: Linux (linked + forced-unlinked)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
       - name: Install TeX Live + libkpathsea
         run: |
           sudo apt-get update
@@ -66,7 +66,7 @@ jobs:
     name: macOS (BasicTeX, subprocess backend)
     runs-on: macos-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
       - name: Install BasicTeX (no libkpathsea by design)
         run: |
           brew install --cask basictex
@@ -85,7 +85,7 @@ jobs:
     name: macOS (Homebrew texlive, linked in-process)
     runs-on: macos-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
       - name: Install Homebrew TeX Live (shared libkpathsea + kpathsea.pc)
         run: |
           brew install pkgconf texlive
@@ -103,7 +103,7 @@ jobs:
     name: Windows (TL kpathsea DLL, linked in-process)
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
       - name: Install TeX Live (scheme-basic)
         uses: TeX-Live/setup-texlive-action@v4
         with:
@@ -127,7 +127,7 @@ jobs:
       # the subprocess backend must be forced to stay under test.
       KPATHSEA_NO_LINK: "1"
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
       - name: Install TeX Live (scheme-basic)
         uses: TeX-Live/setup-texlive-action@v4
         with:
