@@ -32,6 +32,16 @@ Backends:
     0.2.5 holds on both backends.
   * candidate names beginning with `-` are never passed to `kpsewhich`
     (they would be parsed as options) and simply resolve to `None`.
+  * the `ls-R` cache is process-global, shared across instances per
+    `kpsewhich` executable — as Perl's `$kpse_cache` always was.
+    (Per-instance copies were ~50MB each on a full TeX Live, multiplied
+    by every live instance; shared, it is one ~50MB cache total.)
+  * direct-call outcomes (hits and misses) are memoized per instance:
+    re-probing the same absent name no longer costs a process spawn each
+    time — the dominant lookup cost for TeX frontends, and the only
+    lookup path on hosts without `ls-R` databases (MiKTeX). Divergence
+    from the Perl original, which re-spawns; staleness matches the
+    one-shot `ls-R` cache semantics.
 
 kpathsea_sys 0.2.0:
 

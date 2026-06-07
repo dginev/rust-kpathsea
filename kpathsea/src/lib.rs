@@ -16,6 +16,12 @@
 //!   distribution by construction — including MiKTeX, which reimplements
 //!   kpathsea. (This mirrors how Perl LaTeXML has always resolved TeX
 //!   files; see `src/subprocess.rs`.)
+//!
+//! Latency profile (measured on a full TeX Live): in-process lookups are
+//! tens of µs, hit or miss. Subprocess lookups are *bimodal*: sub-µs on an
+//! `ls-R` cache hit — faster than the FFI path — but a cache miss costs a
+//! `kpsewhich` spawn (tens to hundreds of ms, memoized per instance so a
+//! repeated miss is only paid once).
 
 use kpathsea_sys::*;
 #[cfg(kpathsea_linked)]
@@ -174,6 +180,12 @@ impl Kpaths {
   /// Selects the in-process `libkpathsea` backend when the library was
   /// linked at build time, and the subprocess-`kpsewhich` backend
   /// otherwise. Use [`Kpaths::is_in_process`] to inspect the choice.
+  ///
+  /// Construction is comparatively expensive (libkpathsea parses its
+  /// config — ~tens of ms) and, on the in-process backend, serialized
+  /// process-wide because `kpse_set_program_name` mutates global state.
+  /// Construct once and reuse — e.g. one instance per thread — rather
+  /// than constructing per lookup.
   pub fn new() -> Result<Self> {
     #[cfg(kpathsea_linked)]
     {

@@ -106,4 +106,18 @@ fn bogus_kpsewhich_path_degrades_to_none() {
   let kpse = Kpaths::with_kpsewhich("/definitely/not/a/real/kpsewhich");
   assert!(!kpse.is_in_process());
   assert_eq!(kpse.find_file("article.cls"), None);
+  // Second lookup exercises the direct-call memo (hit on a recorded miss).
+  assert_eq!(kpse.find_file("article.cls"), None);
+}
+
+#[test]
+fn instances_agree_through_the_shared_cache() {
+  // The ls-R cache is process-global per kpsewhich executable; a second
+  // instance resolves through the same shared cache and must agree.
+  let (a, b) = (subprocess_kpse(), subprocess_kpse());
+  assert_eq!(a.find_file("article.cls"), b.find_file("article.cls"));
+  // Repeated misses are memoized per instance; both instances agree on None.
+  assert_eq!(a.find_file("zz-not-a-file.qqq"), None);
+  assert_eq!(a.find_file("zz-not-a-file.qqq"), None);
+  assert_eq!(b.find_file("zz-not-a-file.qqq"), None);
 }
