@@ -31,7 +31,7 @@ jobs:
     name: Linux (linked + forced-unlinked)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Install TeX Live + libkpathsea
         run: |
           sudo apt-get update
@@ -56,7 +56,7 @@ jobs:
     name: macOS (BasicTeX, subprocess backend)
     runs-on: macos-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Install BasicTeX (no libkpathsea by design)
         run: |
           brew install --cask basictex
@@ -75,9 +75,9 @@ jobs:
     name: Windows (TeX Live, subprocess backend)
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Install TeX Live (scheme-basic)
-        uses: teatimeguest/setup-texlive-action@v3
+        uses: TeX-Live/setup-texlive-action@v4
         with:
           packages: scheme-basic
       - uses: dtolnay/rust-toolchain@stable
