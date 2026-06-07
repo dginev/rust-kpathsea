@@ -7,6 +7,25 @@ Rust interface and wrapper for the [kpathsea library](https://ctan.org/pkg/kpath
 
 **Note:** Currently there are no safety guarantees and the wrapper is not thread-safe (see #2)
 
+### Backends and portability
+
+Two backends, selected automatically at build time:
+
+* **in-process** — FFI into the system `libkpathsea` (microseconds per
+  lookup). Used when the library is found via `pkg-config kpathsea` or the
+  `KPATHSEA_LIB_DIR` env override (Debian/Ubuntu: `libkpathsea-dev`;
+  macOS: `brew install texlive`).
+* **subprocess** — shells out to the host TeX distribution's own
+  `kpsewhich`, fronted by a one-shot cache of the `ls-R` databases. Used
+  when `libkpathsea` is absent at build time — e.g. **MacTeX/BasicTeX
+  ship no library at all** — or on request via `Kpaths::new_subprocess()`
+  / `Kpaths::with_kpsewhich(path)`. The `KPSEWHICH` env var overrides the
+  executable. This mirrors how Perl LaTeXML resolves TeX files, and stays
+  correct on distributions that reimplement kpathsea (MiKTeX).
+
+The build never fails for lack of `libkpathsea`; `Kpaths::is_in_process()`
+reports which backend you got.
+
 ### Example
 
 ```rust

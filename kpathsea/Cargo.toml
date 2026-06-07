@@ -1,8 +1,9 @@
 [package]
 name = "kpathsea"
-version = "0.2.5"
+version = "0.3.0"
 authors = ["Deyan Ginev <deyan.ginev@gmail.com>", "Emily Eisenberg <xymostech@gmail.com>"]
 edition = "2024"
+build = "build.rs"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/dginev/rust-kpathsea"
 homepage = "https://github.com/dginev/rust-kpathsea"
@@ -15,9 +16,12 @@ Rust interface to the kpathsea TeX file management library.
 name = "kpathsea"
 
 [dependencies]
-kpathsea_sys = { version = "0.1.3", path = "../kpathsea_sys" }
+kpathsea_sys = { version = "0.2.0", path = "../kpathsea_sys" }
 which = "8"
 
-[package.metadata.docs.rs]
-rustc-args = ["--cfg",  "kpathsea_docs_rs"]
-rustdoc-args = ["--cfg", "kpathsea_docs_rs"]
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(kpathsea_linked)'] }
+
+# No docs.rs cfg override needed anymore: kpathsea_sys no longer panics
+# when libkpathsea is absent, so docs.rs builds (which have no TeX) work
+# out of the box — the crate then documents the subprocess configuration.

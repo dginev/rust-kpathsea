@@ -1,6 +1,6 @@
 [package]
 name = "kpathsea_sys"
-version = "0.1.3"
+version = "0.2.0"
 authors = ["Deyan Ginev <deyan.ginev@gmail.com>"]
 edition = "2024"
 links = "kpathsea"
@@ -21,8 +21,8 @@ name = "kpathsea_sys"
 pkg-config = "0.3"
 
 [lints.rust]
-unexpected_cfgs = { level = "warn", check-cfg = ['cfg(kpathsea_docs_rs)'] }
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(kpathsea_linked)'] }
 
-[package.metadata.docs.rs]
-rustc-args = ["--cfg", "kpathsea_docs_rs"]
-rustdoc-args = ["--cfg", "kpathsea_docs_rs"]
+# No docs.rs cfg override needed anymore: the build script no longer panics
+# when libkpathsea is absent, so docs.rs builds (which have no TeX) work
+# out of the box in the unlinked configuration.

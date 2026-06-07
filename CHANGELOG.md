@@ -1,6 +1,50 @@
 # Change Log
 
-## [0.2.6] (next target)
+## [0.3.0] (in development) — subprocess fallback; kpathsea_sys 0.2.0
+
+The headline: **the crate now works on TeX distributions that ship no
+`libkpathsea` at all** (e.g. MacTeX/BasicTeX on macOS — no header, no
+dylib, no `kpathsea.pc`). Diagnosed in latexml-oxide's macOS portability
+probe (`dginev/latexml-oxide#217`).
+
+Backends:
+
+* `Kpaths` is now backend-dispatched:
+  * **in-process** (`libkpathsea` FFI) — unchanged fast path, selected
+    automatically when the library is found at build time;
+  * **subprocess** — delegates to the host's `kpsewhich` executable,
+    fronted by a one-shot cache of the TeX tree's `ls-R` databases
+    (a faithful port of Perl LaTeXML's `pathname_kpsewhich` +
+    `build_kpse_cache`, which never link libkpathsea). Selected
+    automatically when the library was NOT found at build time, or
+    explicitly via the new constructors.
+* New API: `Kpaths::new_subprocess()`, `Kpaths::with_kpsewhich(path)`,
+  `Kpaths::find_first(&[candidates])` (one subprocess call for a whole
+  candidate list on cache miss), `Kpaths::is_in_process()`.
+* `KPSEWHICH` env var overrides the executable used by the subprocess
+  backend (resolved through PATH when a bare name).
+
+kpathsea_sys 0.2.0:
+
+* The build script **no longer panics** when `libkpathsea` is missing:
+  probe order is `KPATHSEA_LIB_DIR` env override → pkg-config → graceful
+  unlinked build (types/constants still available; a `cargo:warning`
+  explains the fallback). Dependents can read `DEP_KPATHSEA_LINKED`
+  (`links = "kpathsea"` metadata) — the high-level crate uses it to
+  select its backend at compile time.
+* New `kpathsea_sys::LINKED: bool` constant.
+* The `kpathsea_docs_rs` cfg hack is gone — docs.rs builds (no TeX) now
+  work out of the box as unlinked builds.
+
+Fixes:
+
+* `guess_format_from_filename`: the alt-suffix loop now carries the same
+  length guard as the suffix loop; bare-extension lookups (a `.sty` with
+  an empty stem) no longer panic with a subtraction overflow in debug
+  builds. (Previously tracked downstream in latexml-oxide as a
+  catch_unwind workaround.)
+
+## [0.2.6] (skipped — superseded by 0.3.0)
 
 ## [0.2.5] 2026-05-17
 

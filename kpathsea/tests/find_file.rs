@@ -21,3 +21,14 @@ fn it_finds_multiple_kinds_of_files() {
   assert!(kpse.find_file("latex.ltx").unwrap().ends_with("latex.ltx"));
   assert!(kpse.find_file("plain.mf").unwrap().ends_with("plain.mf"));
 }
+
+#[test]
+fn degenerate_names_do_not_panic_default_backend() {
+  let kpse = Kpaths::new()
+    .expect("You need a properly setup tex toolchain (texlive/MikTeX/...) to use this wrapper.");
+  // Bare-extension names (empty stem) used to underflow the alt-suffix
+  // comparison in guess_format_from_filename and panic in debug builds.
+  let _ = kpse.find_file(".sty");
+  let _ = kpse.find_file(".bib");
+  let _ = kpse.find_file("");
+}
