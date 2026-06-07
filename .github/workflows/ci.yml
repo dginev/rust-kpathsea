@@ -141,6 +141,7 @@ jobs:
           } > "$NAME.def"
           wc -l "$NAME.def"
           lib -nologo -def:"$NAME.def" -out:"$NAME.lib" -machine:x64
+          echo "KPSE_DLL_NAME=$NAME" >> "$GITHUB_ENV"
           cat > smoke.rs <<'RS'
           use std::ffi::{CStr, CString};
           use std::os::raw::{c_char, c_int, c_uint, c_void};
@@ -165,5 +166,10 @@ jobs:
             }
           }
           RS
-          rustc -O smoke.rs -L . -l "$NAME" -o smoke.exe
+      # pwsh, not bash: under Git Bash, rustc resolves `link` to GNU
+      # coreutils' /usr/bin/link instead of MSVC's link.exe.
+      - name: Smoke-run the opaque API
+        shell: pwsh
+        run: |
+          rustc -O smoke.rs -L . -l $env:KPSE_DLL_NAME -o smoke.exe
           ./smoke.exe
