@@ -20,8 +20,9 @@
 //! Latency profile (measured on a full TeX Live): in-process lookups are
 //! tens of µs, hit or miss. Subprocess lookups are *bimodal*: sub-µs on an
 //! `ls-R` cache hit — faster than the FFI path — but a cache miss costs a
-//! `kpsewhich` spawn (tens to hundreds of ms, memoized per instance so a
-//! repeated miss is only paid once).
+//! `kpsewhich` spawn (tens to hundreds of ms, memoized process-wide per
+//! executable so a repeated miss is only ever paid once, regardless of
+//! which instance or thread asks).
 
 use kpathsea_sys::*;
 #[cfg(kpathsea_linked)]

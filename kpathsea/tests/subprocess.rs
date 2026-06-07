@@ -116,7 +116,8 @@ fn instances_agree_through_the_shared_cache() {
   // instance resolves through the same shared cache and must agree.
   let (a, b) = (subprocess_kpse(), subprocess_kpse());
   assert_eq!(a.find_file("article.cls"), b.find_file("article.cls"));
-  // Repeated misses are memoized per instance; both instances agree on None.
+  // Misses are memoized process-wide alongside the cache: a's spawn
+  // outcome is visible to b, and all repeats agree on None.
   assert_eq!(a.find_file("zz-not-a-file.qqq"), None);
   assert_eq!(a.find_file("zz-not-a-file.qqq"), None);
   assert_eq!(b.find_file("zz-not-a-file.qqq"), None);

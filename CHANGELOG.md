@@ -45,9 +45,10 @@ Backends:
     `kpsewhich` executable — as Perl's `$kpse_cache` always was.
     (Per-instance copies were ~50MB each on a full TeX Live, multiplied
     by every live instance; shared, it is one ~50MB cache total.)
-  * direct-call outcomes (hits and misses) are memoized per instance:
-    re-probing the same absent name no longer costs a process spawn each
-    time — the dominant lookup cost for TeX frontends, and the only
+  * direct-call outcomes (hits and misses) are memoized alongside the
+    cache, process-wide per executable: re-probing the same absent name
+    never costs a second process spawn, even from another thread's
+    instance — the dominant lookup cost for TeX frontends, and the only
     lookup path on hosts without `ls-R` databases (MiKTeX). Divergence
     from the Perl original, which re-spawns; staleness matches the
     one-shot `ls-R` cache semantics.

@@ -14,21 +14,24 @@
 //! including distributions that reimplement kpathsea entirely (MiKTeX).
 //!
 //! Resolution order per lookup:
-//!  1. the `ls-R` cache — process-global, one per `kpsewhich` executable
-//!     (Perl's `$kpse_cache` is likewise a process global), built lazily
-//!     on first use: one `kpsewhich` invocation + reading each `ls-R`
-//!     file in `$TEXMF`;
-//!  2. a per-instance memo of earlier direct-call outcomes — TeX
-//!     frontends re-probe the same absent names constantly, and each
-//!     repeat would otherwise cost a process spawn;
+//!  1. the `ls-R` cache — built lazily on first use: one `kpsewhich`
+//!     invocation + reading each `ls-R` file in `$TEXMF`;
+//!  2. a memo of earlier direct-call outcomes — TeX frontends re-probe
+//!     the same absent names constantly, and each repeat would otherwise
+//!     cost a process spawn;
 //!  3. a direct `kpsewhich <candidates...>` subprocess call (also covers
 //!     distributions without `ls-R` databases, e.g. MiKTeX — same comment
 //!     as in the Perl original), whose outcome feeds the memo.
+//!
+//! Both the cache and the memo live in one [`SharedKpse`] per `kpsewhich`
+//! executable, process-global (Perl's `$kpse_cache` is likewise a process
+//! global): instances are thin handles, and a name resolved — or proven
+//! absent — by one instance is known to all of them.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::sync::{Arc, LazyLock, Mutex, OnceLock, PoisonError};
+use std::sync::{Arc, LazyLock, Mutex, MutexGuard, OnceLock, PoisonError};
 
 /// The kpathsea path-list separator (Perl `$KPATHSEP`).
 const KPATHSEP: char = if cfg!(windows) { ';' } else { ':' };
@@ -36,42 +39,51 @@ const KPATHSEP: char = if cfg!(windows) { ';' } else { ':' };
 /// Basename → first-wins path, from the TeX tree's `ls-R` databases.
 type LsRCache = HashMap<String, String>;
 
-/// The `ls-R` caches, one per `kpsewhich` executable, shared by ALL
-/// instances for the lifetime of the process — Perl's `$kpse_cache` is
-/// likewise a process global. Without sharing, every instance pays the
-/// build (~100ms) and holds its own copy: ~50MB on a full TeX Live,
-/// multiplied by every live instance (gigabytes in a 100-thread smoke
-/// test that constructed one instance per thread).
-static CACHE_REGISTRY: LazyLock<Mutex<HashMap<PathBuf, Arc<LsRCache>>>> =
+/// All mutable backend state for one `kpsewhich` executable, shared by
+/// every instance for the lifetime of the process.
+struct SharedKpse {
+  /// The `ls-R` cache: immutable after build, so reads are lock-free.
+  /// Without sharing, every instance would pay the build (~100ms) and
+  /// hold its own copy — ~50MB on a full TeX Live, multiplied by every
+  /// live instance (gigabytes in a 100-thread smoke test).
+  lsr: LsRCache,
+  /// Outcomes of direct `kpsewhich` calls, hits and misses alike, keyed
+  /// by the full argument vector (see [`SubprocessKpse::run_kpsewhich`]).
+  /// Locked only on the `lsr`-miss path, where the alternative is a
+  /// ~150ms spawn.
+  memo: Mutex<HashMap<String, Option<String>>>,
+}
+
+/// One [`SharedKpse`] per `kpsewhich` executable — Perl's `$kpse_cache`
+/// is likewise a process global.
+static KPSE_REGISTRY: LazyLock<Mutex<HashMap<PathBuf, Arc<SharedKpse>>>> =
   LazyLock::new(|| Mutex::new(HashMap::new()));
 
-/// Fetch (or build) the shared `ls-R` cache for this executable.
-fn shared_kpse_cache(kpsewhich: &Path) -> Arc<LsRCache> {
-  if let Some(cache) = CACHE_REGISTRY
+/// Fetch (or build) the shared state for this executable.
+fn shared_kpse(kpsewhich: &Path) -> Arc<SharedKpse> {
+  if let Some(shared) = KPSE_REGISTRY
     .lock()
     .unwrap_or_else(PoisonError::into_inner)
     .get(kpsewhich)
   {
-    return Arc::clone(cache);
+    return Arc::clone(shared);
   }
   // Built OUTSIDE the registry lock — it spawns kpsewhich and reads the
   // ls-R files. A concurrent duplicate build is benign: first insert wins.
-  let built = Arc::new(build_kpse_cache(kpsewhich));
-  let mut registry = CACHE_REGISTRY
-    .lock()
-    .unwrap_or_else(PoisonError::into_inner);
+  let built = Arc::new(SharedKpse {
+    lsr: build_kpse_cache(kpsewhich),
+    memo: Mutex::new(HashMap::new()),
+  });
+  let mut registry = KPSE_REGISTRY.lock().unwrap_or_else(PoisonError::into_inner);
   Arc::clone(registry.entry(kpsewhich.to_path_buf()).or_insert(built))
 }
 
 pub(crate) struct SubprocessKpse {
   kpsewhich: PathBuf,
-  /// This instance's handle on the shared `ls-R` cache (see
-  /// [`CACHE_REGISTRY`]); resolved lazily by the first lookup, reads are
-  /// lock-free afterwards.
-  cache: OnceLock<Arc<LsRCache>>,
-  /// Outcomes of direct `kpsewhich` calls, hits and misses alike, keyed by
-  /// the full argument vector (see [`Self::run_kpsewhich`]).
-  memo: Mutex<HashMap<String, Option<String>>>,
+  /// This instance's handle on the shared state (see [`KPSE_REGISTRY`]);
+  /// resolved lazily by the first lookup, after which cache reads are
+  /// lock-free.
+  shared: OnceLock<Arc<SharedKpse>>,
 }
 
 impl SubprocessKpse {
@@ -86,22 +98,19 @@ impl SubprocessKpse {
   pub(crate) fn with_kpsewhich(path: PathBuf) -> Self {
     SubprocessKpse {
       kpsewhich: path,
-      cache: OnceLock::new(),
-      memo: Mutex::new(HashMap::new()),
+      shared: OnceLock::new(),
     }
   }
 
-  /// The shared `ls-R` cache for this instance's executable, resolved on
-  /// first use (see [`CACHE_REGISTRY`]).
-  fn cache(&self) -> &LsRCache {
-    self
-      .cache
-      .get_or_init(|| shared_kpse_cache(&self.kpsewhich))
+  /// The shared state for this instance's executable, resolved on first
+  /// use (see [`KPSE_REGISTRY`]).
+  fn shared(&self) -> &SharedKpse {
+    self.shared.get_or_init(|| shared_kpse(&self.kpsewhich))
   }
 
   /// The first candidate with an `ls-R` cache entry, if any.
   fn cache_lookup(&self, candidates: &[&str]) -> Option<String> {
-    let cache = self.cache();
+    let cache = &self.shared().lsr;
     candidates.iter().find_map(|c| cache.get(*c).cloned())
   }
 
@@ -147,15 +156,16 @@ impl SubprocessKpse {
   /// non-zero when ANY candidate is missing — usually only one of them
   /// exists).
   ///
-  /// Outcomes — hits AND misses — are memoized per instance, keyed by the
-  /// full argument vector: TeX frontends re-probe the same absent names
-  /// constantly (and hosts without `ls-R` databases, e.g. MiKTeX, reach
-  /// this path on every lookup), and each repeat would otherwise cost a
-  /// fresh process spawn. This deliberately diverges from the Perl
-  /// original, which re-spawns every time; the staleness it introduces —
-  /// a file added to the TeX tree mid-process stays invisible to an
-  /// instance that already missed it — matches the one-shot `ls-R`
-  /// cache's existing semantics.
+  /// Outcomes — hits AND misses — are memoized process-wide per
+  /// executable ([`SharedKpse::memo`]), keyed by the full argument
+  /// vector: TeX frontends re-probe the same absent names constantly
+  /// (and hosts without `ls-R` databases, e.g. MiKTeX, reach this path
+  /// on every lookup), and each repeat — including from another thread's
+  /// instance — would otherwise cost a fresh process spawn. This
+  /// deliberately diverges from the Perl original, which re-spawns every
+  /// time; the staleness it introduces — a file added to the TeX tree
+  /// mid-process stays invisible once a lookup missed it — matches the
+  /// one-shot `ls-R` cache's existing semantics.
   fn run_kpsewhich(&self, flags: &[&str], names: &[&str]) -> Option<String> {
     let names: Vec<&str> = names
       .iter()
@@ -196,8 +206,12 @@ impl SubprocessKpse {
 
   /// The direct-call memo, tolerating lock poisoning (no code panics while
   /// holding it, but a poisoned memo would only ever repeat spawns).
-  fn memo(&self) -> std::sync::MutexGuard<'_, HashMap<String, Option<String>>> {
-    self.memo.lock().unwrap_or_else(PoisonError::into_inner)
+  fn memo(&self) -> MutexGuard<'_, HashMap<String, Option<String>>> {
+    self
+      .shared()
+      .memo
+      .lock()
+      .unwrap_or_else(PoisonError::into_inner)
   }
 }
 
