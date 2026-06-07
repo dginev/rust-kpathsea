@@ -181,11 +181,16 @@ impl Kpaths {
   /// linked at build time, and the subprocess-`kpsewhich` backend
   /// otherwise. Use [`Kpaths::is_in_process`] to inspect the choice.
   ///
-  /// Construction is comparatively expensive (libkpathsea parses its
-  /// config — ~tens of ms) and, on the in-process backend, serialized
-  /// process-wide because `kpse_set_program_name` mutates global state.
-  /// Construct once and reuse — e.g. one instance per thread — rather
-  /// than constructing per lookup.
+  /// Construction itself is cheap (measured ~0.1ms, serialized
+  /// process-wide on the in-process backend because
+  /// `kpse_set_program_name` mutates global state). The expensive step on
+  /// the in-process backend is each instance's FIRST lookup (~150ms on a
+  /// full TeX Live): libkpathsea parses its config and builds a private
+  /// in-memory copy of the `ls-R` database — tens of MB — per instance,
+  /// whatever the format. Construct once and reuse — e.g. one instance
+  /// per thread — rather than constructing (and re-warming) per lookup.
+  /// The subprocess backend shares one `ls-R` cache process-wide and has
+  /// no per-instance warm-up.
   pub fn new() -> Result<Self> {
     #[cfg(kpathsea_linked)]
     {
@@ -270,11 +275,12 @@ impl Kpaths {
   ///
   /// `guess_format_from_filename` walks every format type in the kpathsea format
   /// info table and lazily initializes each one (via `kpathsea_init_format`)
-  /// before comparing suffixes. On a fresh `Kpaths` instance this parses all of
-  /// the relevant texmf config/db files, which in turn dominates profiles for
-  /// callers that know the format up front (e.g. a LaTeX frontend searching
-  /// only for `kpse_tex_format`). Prefer this method when you already know the
-  /// kpathsea format — it issues exactly one `kpathsea_find_file` call with no
+  /// before comparing suffixes — measured at ~15-20ms of one-time work on a
+  /// fresh `Kpaths` instance. (The bulk of a first in-process lookup, ~150ms
+  /// on a full TeX Live, is libkpathsea building its private in-memory `ls-R`
+  /// db, which every first search pays regardless of format — see
+  /// [`Kpaths::new`].) Prefer this method when you already know the kpathsea
+  /// format — it issues exactly one `kpathsea_find_file` call with no
   /// format-table walk.
   ///
   /// With the subprocess backend the `ls-R` cache is consulted first, like
