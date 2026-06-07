@@ -88,5 +88,82 @@ jobs:
           kpsewhich --version
           cargo build 2>&1 | tee build.log
           grep -q "building without linking" build.log
-      - name: Test
-        run: cargo test
+      # kpathsea crate only: kpathsea_sys's bindings.rs is bindgen output
+      # from Linux/glibc headers, and its layout self-tests assert glibc
+      # struct layouts — meaningless where we never link, and genuinely
+      # different under MSVC's LLP64.
+      - name: Test (kpathsea crate)
+        run: cargo test -p kpathsea
+
+  # EXPERIMENTAL, allowed to fail: can we dynamically link libkpathsea on
+  # Windows? TeX Live's Windows distribution builds its binaries against a
+  # shared kpathsea DLL (bin/windows/kpathsea*.dll) but ships no headers
+  # and no import library. This job inventories the DLL's exports,
+  # synthesizes an import library (dumpbin -exports → .def → lib.exe),
+  # and smoke-links a minimal program against the OPAQUE-POINTER API only
+  # (kpathsea_new / set_program_name / find_file) — struct-field access
+  # is off the table until bindings are regenerated for MSVC (the
+  # Linux-generated layout assertions demonstrably do not hold there).
+  windows-dll-probe:
+    name: Windows (experimental TL-DLL in-process probe)
+    runs-on: windows-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v5
+      - name: Install TeX Live (scheme-basic)
+        uses: TeX-Live/setup-texlive-action@v4
+        with:
+          packages: scheme-basic
+      - uses: ilammy/msvc-dev-cmd@v1
+      - name: Inventory kpathsea DLLs and exports
+        shell: bash
+        run: |
+          BIN="$(dirname "$(command -v kpsewhich)")"
+          echo "TeX bin dir: $BIN"
+          ls -la "$BIN"/*.dll 2>/dev/null || echo "NO DLLs found in $BIN"
+          for dll in "$BIN"/*kpathsea*.dll; do
+            [ -e "$dll" ] || continue
+            echo "=== exports of $dll (kpse_/kpathsea_ symbols) ==="
+            dumpbin -exports "$dll" | grep -Ec "kpathsea_|kpse_" || true
+            dumpbin -exports "$dll" | grep -E "kpathsea_(new|set_program_name|find_file|finish)" || true
+          done
+      - name: Synthesize import library and smoke-link the opaque API
+        shell: bash
+        run: |
+          BIN="$(dirname "$(command -v kpsewhich)")"
+          DLL=$(ls "$BIN"/*kpathsea*.dll 2>/dev/null | head -1)
+          if [ -z "$DLL" ]; then echo "no kpathsea DLL — nothing to probe"; exit 1; fi
+          NAME="$(basename "$DLL" .dll)"
+          # Export table → module-definition file → import library.
+          { echo "LIBRARY $NAME"
+            echo "EXPORTS"
+            dumpbin -exports "$DLL" | awk '$1 ~ /^[0-9]+$/ && NF >= 4 { print "  " $4 }'
+          } > "$NAME.def"
+          wc -l "$NAME.def"
+          lib -nologo -def:"$NAME.def" -out:"$NAME.lib" -machine:x64
+          cat > smoke.rs <<'RS'
+          use std::ffi::{CStr, CString};
+          use std::os::raw::{c_char, c_int, c_uint, c_void};
+          unsafe extern "C" {
+            fn kpathsea_new() -> *mut c_void;
+            fn kpathsea_set_program_name(k: *mut c_void, argv0: *const c_char, prog: *const c_char);
+            fn kpathsea_find_file(k: *mut c_void, name: *const c_char, fmt: c_uint, must_exist: c_int) -> *mut c_char;
+            fn kpathsea_finish(k: *mut c_void);
+          }
+          fn main() {
+            unsafe {
+              let kpse = kpathsea_new();
+              assert!(!kpse.is_null(), "kpathsea_new returned NULL");
+              let prog = CString::new("kpsewhich").unwrap();
+              kpathsea_set_program_name(kpse, prog.as_ptr(), prog.as_ptr());
+              let name = CString::new("article.cls").unwrap();
+              // 26 = kpse_tex_format (stable position in kpse_file_format_type)
+              let found = kpathsea_find_file(kpse, name.as_ptr(), 26, 1);
+              assert!(!found.is_null(), "kpathsea_find_file found nothing");
+              println!("IN-PROCESS FOUND: {}", CStr::from_ptr(found).to_string_lossy());
+              kpathsea_finish(kpse);
+            }
+          }
+          RS
+          rustc -O smoke.rs -L . -l "$NAME" -o smoke.exe
+          ./smoke.exe
