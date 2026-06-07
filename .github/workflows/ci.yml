@@ -5,8 +5,12 @@
 #    platform where development happens). Also runs the drift canaries
 #    that guard the Windows backend: the format constants and the suffix
 #    table are checked against the linked C library.
-#  * macOS — BasicTeX: ships NO libkpathsea at all (no header, no dylib,
-#    no .pc) — the motivating scenario for the subprocess backend.
+#  * macOS, subprocess — BasicTeX: TL-upstream binaries ship NO
+#    libkpathsea at all (no header, no dylib, no .pc) — the motivating
+#    scenario for the subprocess backend.
+#  * macOS, linked — Homebrew texlive: like Debian, Homebrew compiles TL
+#    from source with its own toolchain (--enable-shared), so a shared
+#    libkpathsea + kpathsea.pc exist and the pkg-config probe links them.
 #  * Windows, linked — TeX Live ships its kpathsea as a DLL next to
 #    kpsewhich.exe; kpathsea_sys's build script synthesizes an import
 #    library from the DLL's export table and links it (opaque-pointer
@@ -74,6 +78,24 @@ jobs:
           kpsewhich --version
           cargo build 2>&1 | tee build.log
           grep -q "building without linking" build.log
+      - name: Test
+        run: cargo test
+
+  macos-linked:
+    name: macOS (Homebrew texlive, linked in-process)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: Install Homebrew TeX Live (shared libkpathsea + kpathsea.pc)
+        run: |
+          brew install pkgconf texlive
+          pkg-config --modversion kpathsea
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Build (must link libkpathsea)
+        run: |
+          cargo build 2>&1 | tee build.log
+          ! grep -q "building without linking" build.log
       - name: Test
         run: cargo test
 
