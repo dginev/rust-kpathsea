@@ -1,4 +1,4 @@
-[![Build Status](https://secure.travis-ci.org/dginev/rust-kpathsea.png?branch=master)](http://travis-ci.org/dginev/rust-kpathsea)
+[![CI](https://github.com/dginev/rust-kpathsea/actions/workflows/ci.yml/badge.svg)](https://github.com/dginev/rust-kpathsea/actions/workflows/ci.yml)
 [![API Documentation](https://img.shields.io/badge/docs-API-blue.svg)](https://docs.rs/crate/kpathsea)
 [![License](http://img.shields.io/badge/license-MIT-blue.svg)](https://raw.githubusercontent.com/dginev/rust-kpathsea/master/LICENSE)
 [![crates.io](https://img.shields.io/crates/v/kpathsea.svg)](https://crates.io/crates/kpathsea)
