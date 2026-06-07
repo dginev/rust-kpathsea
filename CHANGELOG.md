@@ -2,114 +2,71 @@
 
 ## [0.3.0] (in development) — subprocess fallback; kpathsea_sys 0.2.0
 
-The headline: **the crate now works on TeX distributions that ship no
-`libkpathsea` at all** (e.g. MacTeX/BasicTeX on macOS — no header, no
-dylib, no `kpathsea.pc`). Diagnosed in latexml-oxide's macOS portability
-probe (`dginev/latexml-oxide#217`).
+**The crate now works on TeX distributions that ship no `libkpathsea`**
+(e.g. MacTeX/BasicTeX). Diagnosed in `dginev/latexml-oxide#217`.
 
-Backends:
+Backends — selected at build time; `Kpaths::is_in_process()` reports the
+choice:
 
-* `Kpaths` is now backend-dispatched:
-  * **in-process** (`libkpathsea` FFI) — unchanged fast path, selected
-    automatically when the library is found at build time. **Now also on
-    Windows**: TeX Live ships its kpathsea as a DLL next to
-    `kpsewhich.exe` (`kpathsealibw64.dll`), which is linked through
-    hand-curated opaque-pointer bindings; format guessing uses a
-    Rust-side suffix table (dumped from a live libkpathsea,
-    drift-checked against the C `format_info` walk on Linux CI);
-  * **subprocess** — delegates to the host's `kpsewhich` executable,
-    fronted by a one-shot cache of the TeX tree's `ls-R` databases
-    (a faithful port of Perl LaTeXML's `pathname_kpsewhich` +
-    `build_kpse_cache`, which never link libkpathsea). Selected
-    automatically when the library was NOT found at build time, or
-    explicitly via the new constructors.
-* New API: `Kpaths::new_subprocess()`, `Kpaths::with_kpsewhich(path)`,
-  `Kpaths::find_first(&[candidates])` (one subprocess call for a whole
-  candidate list on cache miss), `Kpaths::is_in_process()`.
-* `Format` is now owned by this crate (a `u32` alias mirroring the C
-  `kpse_file_format_type` values) instead of re-exporting the
-  `kpathsea_sys` type, so the API is identical whether or not the C
-  library was linked. `formats::TEX` etc. are source-compatible;
-  values are drift-checked against the C enum in linked test builds.
-* `KPSEWHICH` env var overrides the `kpsewhich` executable both backends
-  anchor on (resolved through PATH when a bare name): the subprocess
-  backend invokes it, the in-process backend hands it to
-  `kpathsea_set_program_name`.
-* The build **fails at install time when neither backend is possible** —
-  no `libkpathsea` to link against AND no `kpsewhich` to delegate to —
-  with the remedies spelled out, instead of compiling a crate that can
-  never resolve a file. The probe uses the same per-platform PATH rules
-  as the runtime (`which` crate: PATHEXT/`.exe` on Windows). Skipped
-  automatically on docs.rs and when cross-compiling; skipped explicitly
-  via `KPATHSEA_SKIP_TOOLCHAIN_CHECK=1` (build-here-deploy-there setups).
-* Subprocess-backend behavior notes:
-  * `find_file_with_format` consults the `ls-R` cache before shelling out,
-    exactly like `find_file`; `--format=NAME` only shapes the fallback
-    `kpsewhich` call on a cache miss — so the "fast path" guidance from
-    0.2.5 holds on both backends.
-  * candidate names beginning with `-` are never passed to `kpsewhich`
-    (they would be parsed as options) and simply resolve to `None`.
-  * the `ls-R` cache **evicts ambiguous basenames** (a name listed under
-    more than one subdirectory): no single-pass tie-break can reproduce
-    kpathsea's path-spec ranking from raw `ls-R` order — TL ships two
-    `fonttext.cfg`s (first-wins picks csLaTeX's IL2 one) AND two
-    `hyphen.cfg`s (Perl's last-wins picks antomega's over babel's).
-    Evicted names resolve through the direct (memoized) `kpsewhich`
-    call — ground truth by construction. `-dev` pre-release
-    subdirectories are skipped before ambiguity detection (otherwise
-    every kernel file would be ambiguous against its latex-dev twin).
-  * the `ls-R` cache is process-global, shared across instances per
-    `kpsewhich` executable — as Perl's `$kpse_cache` always was.
-    (Per-instance copies were ~50MB each on a full TeX Live, multiplied
-    by every live instance; shared, it is one ~50MB cache total.)
-  * on Windows, DOS drive letters in cache results are normalized to
-    lowercase, matching kpathsea's own resolved-path normalization —
-    cache hits and direct `kpsewhich` calls return byte-identical
-    strings for the same file (caught by Windows CI).
-  * direct-call outcomes (hits and misses) are memoized alongside the
-    cache, process-wide per executable: re-probing the same absent name
-    never costs a second process spawn, even from another thread's
-    instance — the dominant lookup cost for TeX frontends, and the only
-    lookup path on hosts without `ls-R` databases (MiKTeX). Divergence
-    from the Perl original, which re-spawns; staleness matches the
-    one-shot `ls-R` cache semantics.
+* **in-process** (`libkpathsea` FFI): the unchanged fast path. Now also
+  on Windows, linking TeX Live's `kpathsealibw64.dll` through
+  opaque-pointer bindings; format guessing there uses a Rust-side suffix
+  table, drift-checked against the C walk on Linux CI.
+* **subprocess**: delegates to the host's `kpsewhich`, fronted by a
+  process-global `ls-R` cache — a port of Perl LaTeXML's
+  `pathname_kpsewhich`/`build_kpse_cache`. Selected when no library was
+  found, or explicitly.
+
+New API: `new_subprocess()`, `with_kpsewhich(path)`,
+`find_first(&[candidates])` (one spawn for a whole candidate list),
+`is_in_process()`. The `KPSEWHICH` env var overrides the executable both
+backends anchor on. `Format` is now a crate-owned `u32` alias —
+source-compatible constants, identical API with or without the C library.
+
+The build fails at install time when *neither* backend is possible (no
+library, no `kpsewhich`), with the remedies spelled out; skipped on
+docs.rs and cross-compiles, or via `KPATHSEA_SKIP_TOOLCHAIN_CHECK=1`.
+
+Subprocess backend behavior:
+
+* `find_file_with_format` is cache-first like `find_file`;
+  `--format=NAME` only shapes the fallback call on a miss.
+* candidate names starting with `-` resolve to `None` instead of being
+  parsed as `kpsewhich` options.
+* ambiguous `ls-R` basenames (same name under several directories) are
+  evicted and resolve via `kpsewhich` directly — no single-pass
+  tie-break matches kpathsea's ranking (witnesses: TL's duplicate
+  `fonttext.cfg` and `hyphen.cfg`). `-dev` trees are skipped first.
+* the `ls-R` cache and all direct-call outcomes (hits AND misses) are
+  process-global per executable: one ~50MB cache total instead of one
+  per instance, and a repeated miss costs ~1µs instead of a respawn.
+* Windows: drive letters in cache results are lowercased, matching
+  `kpsewhich`'s own output byte-for-byte.
 
 kpathsea_sys 0.2.0:
 
-* The build script **no longer panics** when `libkpathsea` is missing:
-  probe order is `KPATHSEA_NO_LINK` env kill switch (forces unlinked) →
-  `KPATHSEA_LIB_DIR` env override → pkg-config → Windows: TeX Live's
-  kpathsea DLL next to `kpsewhich.exe` (import library synthesized from
-  the DLL's export table via `dumpbin`/`lib.exe`, located through the
-  registry — no headers, `.lib`, or developer shell needed) → graceful
-  unlinked build (a `cargo:warning` explains the fallback). Dependents
-  can read `DEP_KPATHSEA_LINKED` (`links = "kpathsea"` metadata) — the
-  high-level crate uses it to select its backend at compile time.
-* The bindgen surface exists **only in linked builds**: without a
-  library there is no ABI to describe, and the generated layout
-  self-tests assert glibc/LP64 layouts that are wrong elsewhere (49 of
-  them fail under MSVC). Unlinked builds export only `LINKED`. Windows
-  linked builds use hand-curated opaque-pointer bindings
-  (`bindings_windows.rs`) — struct internals are never dereferenced
-  there.
-* New `kpathsea_sys::LINKED: bool` constant.
-* The `kpathsea_docs_rs` cfg hack is gone — docs.rs builds (no TeX) now
-  work out of the box as unlinked builds.
+* The build script **no longer panics** when `libkpathsea` is missing.
+  Probe order: `KPATHSEA_NO_LINK` (force unlinked) → `KPATHSEA_LIB_DIR`
+  → pkg-config → Windows: TeX Live's kpathsea DLL, with the import
+  library synthesized from its export table (no headers, `.lib`, or dev
+  shell needed) → graceful unlinked. Dependents read
+  `DEP_KPATHSEA_LINKED`; new `LINKED: bool` constant.
+* Bindings exist **only in linked builds** — unlinked builds export just
+  `LINKED`. Windows uses hand-curated opaque-pointer bindings
+  (`bindings_windows.rs`): the Linux-generated layouts do not hold under
+  MSVC, and struct internals are never dereferenced there.
+* The `kpathsea_docs_rs` cfg hack is gone — docs.rs builds work out of
+  the box as unlinked builds.
 
 Fixes:
 
-* `guess_format_from_filename`: the alt-suffix loop now carries the same
-  length guard as the suffix loop; bare-extension lookups (a `.sty` with
-  an empty stem) no longer panic with a subtraction overflow in debug
-  builds. (Previously tracked downstream in latexml-oxide as a
-  catch_unwind workaround. The two suffix loops are now one helper.)
-* Concurrent `Kpaths::new()` calls no longer crash the process:
-  libkpathsea's `kpse_set_program_name` mutates process-global state
-  (static path buffers, `putenv`), so the in-process backend serializes
-  construction/teardown behind a static lock. (Observed as garbled
-  `lstat(...) failed` aborts under parallel `cargo test`.)
-* Lookups of names containing an interior NUL byte return `None` instead
-  of panicking in `CString::new`.
+* bare-extension lookups (`.sty` with an empty stem) no longer panic
+  with a debug-build overflow in `guess_format_from_filename`.
+* concurrent `Kpaths::new()` calls no longer crash the process:
+  construction/teardown is serialized (libkpathsea mutates process
+  globals via `putenv` and static buffers).
+* names containing an interior NUL byte return `None` instead of
+  panicking.
 
 ## [0.2.6] (skipped — superseded by 0.3.0)
 

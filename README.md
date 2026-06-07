@@ -5,45 +5,39 @@
 
 Rust interface and wrapper for the [kpathsea library](https://ctan.org/pkg/kpathsea)
 
-**Note:** Currently there are no safety guarantees for the in-process backend, and a `Kpaths` instance is not `Sync` (see #2). Constructing instances from multiple threads is safe — construction is serialized internally.
+**Note:** a `Kpaths` instance is not `Sync` (see #2). Constructing
+instances from multiple threads is safe — construction is serialized
+internally.
 
-### Backends and portability
+### Backends
 
-Two backends, selected automatically at build time:
+Selected automatically at build time; `Kpaths::is_in_process()` reports
+the choice.
 
-* **in-process** — FFI into the system `libkpathsea` (microseconds per
-  lookup). Used when the library is found via `pkg-config kpathsea` or the
-  `KPATHSEA_LIB_DIR` env override (Debian/Ubuntu: `libkpathsea-dev`;
-  macOS: `brew install texlive`). On **Windows**, TeX Live's own kpathsea
-  DLL (`kpathsealibw64.dll`, installed next to `kpsewhich.exe`) is found
-  and linked automatically — the build synthesizes the import library
-  from the DLL's export table, no headers or `.lib` needed. Setting
-  `KPATHSEA_NO_LINK=1` at build time skips all of this and forces the
-  subprocess backend.
-* **subprocess** — shells out to the host TeX distribution's own
-  `kpsewhich`, fronted by a one-shot cache of the `ls-R` databases. Used
-  when `libkpathsea` is absent at build time — e.g. **MacTeX/BasicTeX
-  ship no library at all** — or on request via `Kpaths::new_subprocess()`
-  / `Kpaths::with_kpsewhich(path)`. This mirrors how Perl LaTeXML resolves
-  TeX files, and stays correct on distributions that reimplement kpathsea
-  (MiKTeX).
+* **in-process** — FFI into `libkpathsea`; microsecond lookups. Linked
+  when found via `pkg-config` or `KPATHSEA_LIB_DIR` (Debian/Ubuntu:
+  `libkpathsea-dev`; macOS: `brew install texlive`). On **Windows**, TeX
+  Live's own `kpathsealibw64.dll` (next to `kpsewhich.exe`) is linked
+  automatically — no headers or import library needed.
+* **subprocess** — delegates to the host's `kpsewhich`, fronted by a
+  process-global `ls-R` cache (how Perl LaTeXML resolves files). Used
+  when no library is available — MacTeX/BasicTeX ship none — or via
+  `Kpaths::new_subprocess()` / `Kpaths::with_kpsewhich(path)`. Stays
+  correct on distributions that reimplement kpathsea (MiKTeX).
 
-The `KPSEWHICH` env var overrides the `kpsewhich` executable both backends
-anchor on (the subprocess backend invokes it; the in-process backend uses
-its location to find the right TeX distribution).
+The build fails only when *neither* backend is possible — no library, no
+`kpsewhich` — with the remedies spelled out. (`kpathsea_sys` exports its
+FFI bindings only in linked builds; the high-level API is identical
+either way.)
 
-The `kpathsea_sys` crate exports its FFI bindings only in linked builds —
-unlinked builds export just the `LINKED` constant. The high-level
-`kpathsea` API (including the `Format` type and `formats` constants) is
-identical in both configurations.
+Environment variables:
 
-The build never fails for lack of `libkpathsea` alone; `Kpaths::is_in_process()`
-reports which backend you got. It **does** fail — at install time, with the
-remedies spelled out — when *neither* backend is possible: no library to link
-against and no `kpsewhich` to delegate to. The check is skipped on docs.rs and
-when cross-compiling (the build host's PATH says nothing about the target);
-set `KPATHSEA_SKIP_TOOLCHAIN_CHECK=1` to skip it explicitly, e.g. when
-building on a machine without TeX for deployment to one with it.
+| Variable | Effect |
+|---|---|
+| `KPSEWHICH` | the `kpsewhich` executable both backends anchor on |
+| `KPATHSEA_LIB_DIR` | link `libkpathsea` from this directory |
+| `KPATHSEA_NO_LINK=1` | force the subprocess backend at build time |
+| `KPATHSEA_SKIP_TOOLCHAIN_CHECK=1` | allow building with no TeX at all (docs.rs and cross-compiles skip the check automatically) |
 
 ### Example
 
