@@ -11,7 +11,12 @@ Backends:
 
 * `Kpaths` is now backend-dispatched:
   * **in-process** (`libkpathsea` FFI) — unchanged fast path, selected
-    automatically when the library is found at build time;
+    automatically when the library is found at build time. **Now also on
+    Windows**: TeX Live ships its kpathsea as a DLL next to
+    `kpsewhich.exe` (`kpathsealibw64.dll`), which is linked through
+    hand-curated opaque-pointer bindings; format guessing uses a
+    Rust-side suffix table (dumped from a live libkpathsea,
+    drift-checked against the C `format_info` walk on Linux CI);
   * **subprocess** — delegates to the host's `kpsewhich` executable,
     fronted by a one-shot cache of the TeX tree's `ls-R` databases
     (a faithful port of Perl LaTeXML's `pathname_kpsewhich` +
@@ -21,6 +26,11 @@ Backends:
 * New API: `Kpaths::new_subprocess()`, `Kpaths::with_kpsewhich(path)`,
   `Kpaths::find_first(&[candidates])` (one subprocess call for a whole
   candidate list on cache miss), `Kpaths::is_in_process()`.
+* `Format` is now owned by this crate (a `u32` alias mirroring the C
+  `kpse_file_format_type` values) instead of re-exporting the
+  `kpathsea_sys` type, so the API is identical whether or not the C
+  library was linked. `formats::TEX` etc. are source-compatible;
+  values are drift-checked against the C enum in linked test builds.
 * `KPSEWHICH` env var overrides the `kpsewhich` executable both backends
   anchor on (resolved through PATH when a bare name): the subprocess
   backend invokes it, the in-process backend hands it to
@@ -67,11 +77,21 @@ Backends:
 kpathsea_sys 0.2.0:
 
 * The build script **no longer panics** when `libkpathsea` is missing:
-  probe order is `KPATHSEA_LIB_DIR` env override → pkg-config → graceful
-  unlinked build (types/constants still available; a `cargo:warning`
-  explains the fallback). Dependents can read `DEP_KPATHSEA_LINKED`
-  (`links = "kpathsea"` metadata) — the high-level crate uses it to
-  select its backend at compile time.
+  probe order is `KPATHSEA_NO_LINK` env kill switch (forces unlinked) →
+  `KPATHSEA_LIB_DIR` env override → pkg-config → Windows: TeX Live's
+  kpathsea DLL next to `kpsewhich.exe` (import library synthesized from
+  the DLL's export table via `dumpbin`/`lib.exe`, located through the
+  registry — no headers, `.lib`, or developer shell needed) → graceful
+  unlinked build (a `cargo:warning` explains the fallback). Dependents
+  can read `DEP_KPATHSEA_LINKED` (`links = "kpathsea"` metadata) — the
+  high-level crate uses it to select its backend at compile time.
+* The bindgen surface exists **only in linked builds**: without a
+  library there is no ABI to describe, and the generated layout
+  self-tests assert glibc/LP64 layouts that are wrong elsewhere (49 of
+  them fail under MSVC). Unlinked builds export only `LINKED`. Windows
+  linked builds use hand-curated opaque-pointer bindings
+  (`bindings_windows.rs`) — struct internals are never dereferenced
+  there.
 * New `kpathsea_sys::LINKED: bool` constant.
 * The `kpathsea_docs_rs` cfg hack is gone — docs.rs builds (no TeX) now
   work out of the box as unlinked builds.

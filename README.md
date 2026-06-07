@@ -14,7 +14,12 @@ Two backends, selected automatically at build time:
 * **in-process** — FFI into the system `libkpathsea` (microseconds per
   lookup). Used when the library is found via `pkg-config kpathsea` or the
   `KPATHSEA_LIB_DIR` env override (Debian/Ubuntu: `libkpathsea-dev`;
-  macOS: `brew install texlive`).
+  macOS: `brew install texlive`). On **Windows**, TeX Live's own kpathsea
+  DLL (`kpathsealibw64.dll`, installed next to `kpsewhich.exe`) is found
+  and linked automatically — the build synthesizes the import library
+  from the DLL's export table, no headers or `.lib` needed. Setting
+  `KPATHSEA_NO_LINK=1` at build time skips all of this and forces the
+  subprocess backend.
 * **subprocess** — shells out to the host TeX distribution's own
   `kpsewhich`, fronted by a one-shot cache of the `ls-R` databases. Used
   when `libkpathsea` is absent at build time — e.g. **MacTeX/BasicTeX
@@ -26,6 +31,11 @@ Two backends, selected automatically at build time:
 The `KPSEWHICH` env var overrides the `kpsewhich` executable both backends
 anchor on (the subprocess backend invokes it; the in-process backend uses
 its location to find the right TeX distribution).
+
+The `kpathsea_sys` crate exports its FFI bindings only in linked builds —
+unlinked builds export just the `LINKED` constant. The high-level
+`kpathsea` API (including the `Format` type and `formats` constants) is
+identical in both configurations.
 
 The build never fails for lack of `libkpathsea` alone; `Kpaths::is_in_process()`
 reports which backend you got. It **does** fail — at install time, with the

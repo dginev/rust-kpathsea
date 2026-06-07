@@ -19,6 +19,11 @@ name = "kpathsea_sys"
 
 [build-dependencies]
 pkg-config = "0.3"
+# Windows DLL probe: locate kpsewhich (and thus TeX Live's kpathsea DLL)
+# with the same PATH rules as the runtime, and find the MSVC tools that
+# synthesize the import library. Both are inert off Windows.
+which = "8"
+cc = "1"
 
 # `cfg(kpathsea_linked)` is registered via `cargo:rustc-check-cfg` in
 # build.rs, next to where the cfg itself is emitted.
