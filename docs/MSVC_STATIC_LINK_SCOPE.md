@@ -114,6 +114,57 @@ ABI (same kpathsea version → same struct layout). Regenerate via bindgen again
 the vendored headers if the pinned version differs from what the current
 bindings were cut against.
 
+## Version skew: does a vendored kpathsea drift from the host TeX Live?
+
+The natural objection: **kpathsea's version moves with each TeX Live release, so
+a vendored copy could go out of sync with the user's tree.** Real question,
+benign answer for our use — and, crucially, it is the *same* contract the
+Linux/macOS static release legs already run under in production.
+
+Separate the two things that both "move with TL":
+
+1. **The dumps** (`{plain,latex}.YYYY.dump.txt`) — genuinely TL-year-specific.
+   Already handled, independently of this work: the release embeds a 5-year
+   moving window and the runtime picks the right year via
+   `kpsewhich -var-value=SELFAUTOPARENT` / `pdflatex --version`. Orthogonal to
+   the kpathsea library.
+2. **The kpathsea library** (the C path-search engine) — what we'd vendor. This
+   does **not** need to match the host tree's year, because:
+
+   - **It reads the *host's* config, not a baked-in one.** The high-level crate
+     anchors the linked library on the host's `kpsewhich` path
+     (`kpathsea_set_program_name(kpse, <host kpsewhich>, …)`, kpathsea 0.3.0
+     lib.rs:133-341). So the vendored library self-locates *as if it were the
+     host's kpsewhich* and reads the host's `texmf.cnf` + `ls-R` + tree. The
+     baked `paths.h` defaults are overridden by the host `texmf.cnf` and are
+     near-irrelevant (see §3 above).
+   - **The formats it consumes are decades-stable and version-tolerant.**
+     `texmf.cnf` (unknown directives ignored) and `ls-R` have not changed shape
+     across the 2022–2026 window; a vendored engine reads an older-or-newer
+     host tree fine.
+   - **latexml-oxide only resolves long-stable file types** (`.sty`, `.cls`,
+     `.tfm`, `.cnf`, `.enc`, `.map`, `.pfb`). New per-year `kpse_*_format`
+     enums don't affect these lookups.
+   - **The vendored C + our bindgen bindings compile together** → self-
+     consistent ABI regardless of the host version.
+
+   This is precisely how the **Linux/macOS static legs already ship**: one
+   pinned static kpathsea running against whatever TL (2022–2026) or MacTeX the
+   user has. It works because the runtime backend is identical to a dynamic
+   link — only the *code's location* changes, not *which tree it reads*.
+
+**So we pin one recent version (e.g. 6.4.x) and it serves the whole window.**
+Bumping the vendored version is occasional hygiene (upstream bug fixes, a
+genuinely new format need) — low-frequency and decoupled from per-year
+correctness, **not** a per-TL-release chore.
+
+**Zero-skew escape hatch:** the subprocess backend runs the host's *exact*
+`kpsewhich`, so it is inherently version-perfect. It stays as the fallback — if
+a future kpathsea/TL ever introduced a breaking search behavior the vendored
+engine couldn't match, a build could opt back to subprocess with no code change
+(`KPATHSEA_NO_LINK=1`). That safety valve is why vendoring carries no lock-in
+risk.
+
 ## What does NOT change
 - Runtime behavior: the host's texmf tree is still resolved via kpathsea's
   self-location / `texmf.cnf` — static linking changes *where the code lives*,
