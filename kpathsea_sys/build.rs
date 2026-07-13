@@ -50,8 +50,10 @@ fn main() {
   // `vendored` feature: build a static libkpathsea from the bundled sources.
   // Placed right after the NO_LINK escape hatch so opting in takes precedence
   // over the system-library probes below. Inert (returns false) off
-  // windows-msvc, so other platforms keep the normal probe order.
-  if cfg!(feature = "vendored") && try_vendored() {
+  // windows-msvc, so other platforms keep the normal probe order. Detected via
+  // the Cargo-guaranteed CARGO_FEATURE_* env var, not `cfg!(feature=…)` (whose
+  // availability inside build scripts is not contractual).
+  if env::var_os("CARGO_FEATURE_VENDORED").is_some() && try_vendored() {
     emit_linked();
     return;
   }
