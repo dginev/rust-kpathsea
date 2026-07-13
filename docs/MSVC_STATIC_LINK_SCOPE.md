@@ -1,10 +1,63 @@
 # Scope: static, in-process libkpathsea on Windows/MSVC
 
-**Status:** scoping only (no implementation yet). Branch `msvc-static-scope`.
+**Status:** scoped + **Phase-1 spike done → GO** (2026-07-13). Branch `msvc-static-scope`.
 **Goal:** let a Windows/MSVC build link libkpathsea **statically and
 in-process** (`KPATHSEA_STATIC`), so downstream binaries (e.g. latexml-oxide's
 Windows release `.exe`) get fast in-process file lookups **and** stay
 self-contained — no runtime `kpathsealibw64.dll` dependency.
+
+## Phase-1 spike result (2026-07-13): GO — no source patches needed
+
+Ran the de-risking compile spike against **kpathsea 6.4.3/dev** (TeX Live source
+mirror; host is 6.4.2, structurally identical) with `cc` → cl.exe (VS2022
+14.44). Outcome: **the full library compiles, links statically into a Rust
+binary, and does correct in-process lookups — with ZERO edits to kpathsea's
+`.c`/`.h` sources.** The MSVC shim surface I flagged as the top risk turned out
+to be *already provided* by kpathsea's own `win32lib.h` (it remaps
+`getcwd→_getcwd`, `stat→_stat`, `putenv→_putenv`, `inline→__inline`, `isascii`,
+`strcasecmp`, `S_ISDIR`, and the WIN32 `dirent`/`opendir` shims). The entire
+port reduced to build configuration:
+
+- **Compile set:** the `Makefile.am` base list + `getopt.c`/`getopt1.c` +
+  `win32lib.c` + `knj.c` (55 `.c`). The `win32/` `mktex*` subdir is **dropped**
+  by setting `MAKE_TEX_*_BY_DEFAULT 0` (lookup-only; no on-the-fly generation).
+- **Two `-D` flags:** `MAKE_KPSE_DLL` (the "compiling the library itself" marker
+  that exposes internal `static inline` helpers like `str_list_init` — gated
+  behind `#ifdef MAKE_KPSE_DLL`, this was the one non-obvious find) **and**
+  `NO_KPSE_DLL` (keeps `KPSEDLL` expanding to empty, so no `__declspec` — correct
+  for a static link).
+- **Include path:** `vendor/include` (for `<kpathsea/*.h>`) + `vendor/include/kpathsea`
+  (sibling-style bare `getopt.h`), plus a one-line `config.h` shim at the root
+  (`#include <kpathsea/config.h>`) for the 3 utility files that include bare
+  `config.h` (autotools puts the generated header at the build root).
+- **Two synthesized headers** (the only hand-written artifacts): `c-auto.h`
+  (~35 `HAVE_*`/`SIZEOF_*`/`PACKAGE_*`/`KPSEVERSION` lines for the MSVC feature
+  set) and a `paths.h` stub (the ~58 `DEFAULT_*` path strings, runtime-overridden
+  by `texmf.cnf`).
+- **Link libs:** `shell32` (`CommandLineToArgvW`), `user32` (`CharLowerA`),
+  `advapi32` (`GetUserNameA`) — three OS import libs.
+
+**Smoke test** (Rust bin, static-linked, `kpathsea_set_program_name` anchored on
+the host `C:\texlive\2026\bin\windows\kpsewhich.exe`, then `kpathsea_find_file`):
+
+```
+article.cls -> c:/texlive/2026/texmf-dist/tex/latex/base/article.cls
+cmr10.tfm   -> c:/texlive/2026/texmf-dist/fonts/tfm/public/cm/cmr10.tfm
+plain.tex   -> c:/texlive/2026/texmf-dist/tex/plain/base/plain.tex
+latex.ltx   -> c:/texlive/2026/texmf-dist/tex/latex/base/latex.ltx
+```
+
+The **6.4.3/dev** library read the host **6.4.2** tree correctly — a live
+confirmation of the version-skew analysis below. `dumpbin /DEPENDENTS` on the
+`.exe` showed **only OS/CRT DLLs, no `kpathsealibw64.dll`** — self-contained,
+launches on any Windows regardless of TeX distro. This is the whole thesis,
+demonstrated end-to-end.
+
+Remaining work is now *productization*, not feasibility: fold the recipe into
+`kpathsea_sys/build.rs`, vendor a pinned 6.4.2 tarball, generate `c-auto.h`
+programmatically, confirm `bindings_windows.rs` matches, and flip latexml-oxide's
+release leg. (Spike artifacts were in the session scratchpad — ephemeral; this
+recipe is the durable output.)
 
 ## Why (motivation)
 
@@ -175,11 +228,11 @@ risk.
   vendored build is disabled or fails to compile on a given toolchain.
 
 ## Phasing (de-risk first)
-1. **Spike (1–2 days):** vendor kpathsea, wire a minimal `cc::Build` over the
-   `Makefile.am` source list + a first-cut `c-auto.h`, and just try to
-   **compile on windows-msvc**. Triage the MSVC error set (headers, shims).
-   This determines whether option (1) is a few shims or a swamp — decide
-   go/no-go here.
+1. **Spike — ✅ DONE (2026-07-13), GO.** Compiled all 55 `.c` on windows-msvc,
+   linked static, in-process lookups verified, `.exe` self-contained. Zero
+   source patches; the shim surface was already in `win32lib.h`. Full recipe in
+   the "Phase-1 spike result" section above. It was a few build flags, not a
+   swamp.
 2. **Link + smoke:** get `kpathsea_sys` to emit `linked=1`; build the high-level
    `kpathsea` crate; run its test suite on Windows; confirm `find_file` resolves
    a real texmf file in-process (no `kpsewhich` spawn).
@@ -192,11 +245,15 @@ risk.
    the leg.
 
 ## Effort & risk
-- **Effort:** medium. The compile set + build.rs wiring is mechanical (libmarpa
-  precedent). The `c-auto.h` synthesis and MSVC shims are the real work.
-- **Top risk:** kpathsea's Windows code assumes MinGW; the MSVC shim surface is
-  unknown until the spike. If it balloons, fall back to keeping the subprocess
-  backend for the Windows release (no regression — it works today).
+- **Effort:** low-to-medium (revised down after the spike). The compile set +
+  build.rs wiring is mechanical (libmarpa precedent) and now has a proven
+  recipe. The `c-auto.h` synthesis is done in draft; no MSVC shims are needed.
+- **Top risk: RESOLVED.** The feared MSVC-vs-MinGW shim surface didn't
+  materialize — `win32lib.h` already provides it, and the spike compiled with
+  zero source patches. Residual risks are minor: keeping the vendored `c-auto.h`
+  correct across a version bump, and confirming `bindings_windows.rs` matches
+  the pinned ABI. The subprocess backend remains the fallback (no regression —
+  it works today).
 - **Value:** in-process lookups on Windows (meaningful, since Windows process
   spawn is expensive and conversions do many lookups), plus a self-contained
   `.exe`. Quantify in Phase 3 before committing to publish.
