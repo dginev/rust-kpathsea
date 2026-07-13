@@ -2,6 +2,18 @@
 
 ## [0.3.1] (in development)
 
+* **`kpathsea_sys` 0.2.2 — new opt-in `vendored` feature.** Builds a static
+  libkpathsea from bundled sources (`kpathsea_sys/vendor/`) with `cc` instead of
+  locating a system/DLL library. On `*-pc-windows-msvc` this gives an
+  in-process **and** self-contained link — no runtime `kpathsealibw64.dll`
+  dependency, so the binary launches on any Windows regardless of TeX
+  distribution (unlike the default Windows path, which dynamically links TeX
+  Live's DLL). Off by default; no effect on other targets (the build falls
+  through to the normal probe order). Motivated by `dginev/latexml-oxide`'s
+  Windows release, which otherwise ships the slower subprocess backend for
+  portability. See `kpathsea_sys/vendor/README.md` and
+  `docs/MSVC_STATIC_LINK_SCOPE.md`.
+
 ## [0.3.0] 2026-06-07 — portable backends; kpathsea_sys 0.2.0
 
 **The crate now works on Linux, macOS, and Windows, with or without

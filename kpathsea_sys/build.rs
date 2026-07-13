@@ -47,6 +47,15 @@ fn main() {
     return;
   }
 
+  // `vendored` feature: build a static libkpathsea from the bundled sources.
+  // Placed right after the NO_LINK escape hatch so opting in takes precedence
+  // over the system-library probes below. Inert (returns false) off
+  // windows-msvc, so other platforms keep the normal probe order.
+  if cfg!(feature = "vendored") && try_vendored() {
+    emit_linked();
+    return;
+  }
+
   // Static vs. shared link mode. `static=` bakes `libkpathsea.a` into the
   // binary (self-contained, no runtime libkpathsea dependency); the default
   // links the shared library at load time.
@@ -112,6 +121,78 @@ fn main() {
 fn emit_linked() {
   println!("cargo:rustc-cfg=kpathsea_linked");
   println!("cargo:linked=1");
+}
+
+/// `vendored` feature: compile a static libkpathsea from the bundled `vendor/`
+/// sources with `cc` and link it. The result is an in-process, self-contained
+/// link — no runtime `kpathsealibw64.dll`, so the binary launches on any
+/// Windows regardless of TeX distribution.
+///
+/// Windows/MSVC only: the bundled `c-auto.h` targets the MSVC feature set.
+/// Returns `false` on any other target (and warns), so the caller falls through
+/// to the normal probe order. A *compile* failure, by contrast, is a hard error
+/// (`cc` panics) — the feature is an explicit opt-in, so failing to honor it
+/// must not silently degrade to the subprocess backend. See `vendor/README.md`.
+fn try_vendored() -> bool {
+  if env::var("CARGO_CFG_TARGET_OS").as_deref() != Ok("windows")
+    || env::var("CARGO_CFG_TARGET_ENV").as_deref() != Ok("msvc")
+  {
+    println!(
+      "cargo:warning=kpathsea_sys: `vendored` feature is enabled but the target \
+       is not *-pc-windows-msvc; ignoring it and using the normal probe order."
+    );
+    return false;
+  }
+
+  let manifest = PathBuf::from(env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR not set"));
+  let vendor = manifest.join("vendor");
+  let src = vendor.join("kpathsea");
+  println!("cargo:rerun-if-changed={}", vendor.display());
+
+  let mut build = cc::Build::new();
+  build
+    // Include order matters: `generated/kpathsea` wins for the synthesized
+    // c-auto.h + paths.h; `vendor/` is the root for `<kpathsea/*.h>`; `src`
+    // resolves sibling-style bare includes (getopt.h); `generated/` also holds
+    // the bare `config.h` shim.
+    .include(vendor.join("generated"))
+    .include(&vendor)
+    .include(&src)
+    // MAKE_KPSE_DLL marks "compiling libkpathsea itself" (exposes internal
+    // `static inline` helpers gated behind it). NO_KPSE_DLL keeps KPSEDLL
+    // expanding to empty — no `__declspec`, correct for a static link.
+    .define("MAKE_KPSE_DLL", None)
+    .define("NO_KPSE_DLL", None)
+    .define("_CRT_SECURE_NO_WARNINGS", None)
+    .define("_CRT_NONSTDC_NO_WARNINGS", None)
+    .warnings(false);
+
+  let Ok(entries) = std::fs::read_dir(&src) else {
+    return false;
+  };
+  let mut n = 0;
+  for e in entries.flatten() {
+    let p = e.path();
+    if p.extension().and_then(|x| x.to_str()) == Some("c") {
+      build.file(&p);
+      n += 1;
+    }
+  }
+  if n == 0 {
+    return false;
+  }
+
+  // Emits `cargo:rustc-link-search` + `cargo:rustc-link-lib=static=kpathsea`.
+  build.compile("kpathsea");
+  // OS imports referenced by win32lib.c / knj.c / hash.c / db.c.
+  println!("cargo:rustc-link-lib=shell32"); // CommandLineToArgvW
+  println!("cargo:rustc-link-lib=user32"); // CharLowerA
+  println!("cargo:rustc-link-lib=advapi32"); // GetUserNameA
+  println!(
+    "cargo:warning=kpathsea_sys: linked static libkpathsea from vendored sources \
+     ({n} .c files) — in-process, self-contained (no kpathsealibw64.dll)."
+  );
+  true
 }
 
 /// Windows: TeX Live ships its kpathsea as a DLL next to `kpsewhich.exe`
