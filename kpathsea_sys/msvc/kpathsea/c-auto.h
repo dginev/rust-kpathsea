@@ -2,8 +2,8 @@
    Stands in for kpathsea's autoconf-generated header (there is no
    ./configure step in the vendored `cc` build). Values reflect the MSVC
    (cl.exe / UCRT) feature set and are fixed for the target, so this is
-   maintained by hand rather than probed. Revisit on a vendored-kpathsea
-   version bump. See vendor/README.md for provenance. */
+   maintained by hand rather than probed. Revisit on a kpathsea version bump
+   (KPSE_REF in build.rs). See msvc/README.md. */
 #ifndef KPATHSEA_C_AUTO_H
 #define KPATHSEA_C_AUTO_H
 
@@ -56,12 +56,12 @@
 #define PACKAGE "kpathsea"
 #define PACKAGE_NAME "Kpathsea"
 #define PACKAGE_TARNAME "kpathsea"
-#define PACKAGE_VERSION "6.4.3/dev"
-#define PACKAGE_STRING "Kpathsea 6.4.3/dev"
+#define PACKAGE_VERSION "6.4.1"
+#define PACKAGE_STRING "Kpathsea 6.4.1"
 #define PACKAGE_BUGREPORT "tex-k@tug.org"
 #define PACKAGE_URL ""
-#define VERSION "6.4.3/dev"
-#define KPSEVERSION "kpathsea version 6.4.3/dev"
+#define VERSION "6.4.1"
+#define KPSEVERSION "kpathsea version 6.4.1"
 
 /* MSVC's snprintf is C99-conformant (VS2015+); config.h still wraps on WIN32. */
 

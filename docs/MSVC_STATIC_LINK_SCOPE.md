@@ -1,6 +1,17 @@
 # Scope: static, in-process libkpathsea on Windows/MSVC
 
-**Status:** scoped + **Phase-1 spike done → GO** (2026-07-13). Branch `msvc-static-scope`.
+**Status:** scoped + spike done → GO → **implemented as the opt-in
+`build_from_source` feature** (2026-07-13/14). Branch `msvc-static-scope`.
+
+> **Update (2026-07-14): fetch, don't vendor.** kpathsea is LGPL-2.1 and this
+> crate is MIT/Apache, so the LGPL sources are NOT bundled — `build.rs` fetches
+> them at build time (pinned `KPSE_REF` = 6.4.1, matching the bindings + Linux/
+> macOS `build_static_kpathsea.sh`) or takes them from `KPATHSEA_SRC_DIR`. Only
+> the original MSVC config headers ship in-tree (`msvc/`). The feature was
+> renamed `vendored` → `build_from_source`. Everything below about the *compile*
+> recipe still holds; only the source *acquisition* changed from vendored-tree to
+> fetch. A statically-linked binary still carries LGPL §6 obligations (same as
+> the existing Linux/macOS static legs) — see `msvc/README.md`.
 **Goal:** let a Windows/MSVC build link libkpathsea **statically and
 in-process** (`KPATHSEA_STATIC`), so downstream binaries (e.g. latexml-oxide's
 Windows release `.exe`) get fast in-process file lookups **and** stay

@@ -18,12 +18,14 @@ categories = ["external-ffi-bindings"]
 name = "kpathsea_sys"
 
 [features]
-# Build a static libkpathsea from the bundled sources in `vendor/` with `cc`,
-# instead of locating a system/DLL library. On *-pc-windows-msvc this yields an
-# in-process, self-contained link (no runtime kpathsealibw64.dll dependency).
-# Opt-in; off by default. See vendor/README.md. No effect off windows-msvc
-# (the build falls through to the normal probe order).
-vendored = []
+# Build a static libkpathsea from source with `cc`, instead of locating a
+# system/DLL library. On *-pc-windows-msvc this yields an in-process,
+# self-contained link (no runtime kpathsealibw64.dll dependency). The kpathsea
+# source is NOT bundled (it is LGPL; this crate stays MIT/Apache): it is fetched
+# at build time (pinned commit) or taken from `KPATHSEA_SRC_DIR`. Only OUR
+# synthesized MSVC config headers live in-tree (`msvc/`, all original). Opt-in;
+# off by default; no effect off windows-msvc. See `msvc/README.md`.
+build_from_source = []
 
 [build-dependencies]
 pkg-config = "0.3"

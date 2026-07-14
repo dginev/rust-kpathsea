@@ -47,13 +47,13 @@ fn main() {
     return;
   }
 
-  // `vendored` feature: build a static libkpathsea from the bundled sources.
+  // `build_from_source` feature: build a static libkpathsea from source.
   // Placed right after the NO_LINK escape hatch so opting in takes precedence
   // over the system-library probes below. Inert (returns false) off
   // windows-msvc, so other platforms keep the normal probe order. Detected via
   // the Cargo-guaranteed CARGO_FEATURE_* env var, not `cfg!(feature=…)` (whose
   // availability inside build scripts is not contractual).
-  if env::var_os("CARGO_FEATURE_VENDORED").is_some() && try_vendored() {
+  if env::var_os("CARGO_FEATURE_BUILD_FROM_SOURCE").is_some() && try_build_from_source() {
     emit_linked();
     return;
   }
@@ -125,40 +125,70 @@ fn emit_linked() {
   println!("cargo:linked=1");
 }
 
-/// `vendored` feature: compile a static libkpathsea from the bundled `vendor/`
-/// sources with `cc` and link it. The result is an in-process, self-contained
-/// link — no runtime `kpathsealibw64.dll`, so the binary launches on any
-/// Windows regardless of TeX distribution.
+/// `build_from_source` feature: compile a static libkpathsea from the kpathsea
+/// C sources with `cc` and link it. The result is an in-process, self-contained
+/// link — no runtime `kpathsealibw64.dll`, so the binary launches on any Windows
+/// regardless of TeX distribution.
 ///
-/// Windows/MSVC only: the bundled `c-auto.h` targets the MSVC feature set.
-/// Returns `false` on any other target (and warns), so the caller falls through
-/// to the normal probe order. A *compile* failure, by contrast, is a hard error
-/// (`cc` panics) — the feature is an explicit opt-in, so failing to honor it
-/// must not silently degrade to the subprocess backend. See `vendor/README.md`.
-fn try_vendored() -> bool {
+/// The kpathsea sources are LGPL, so they are **not** bundled in this (MIT OR
+/// Apache-2.0) crate: they come from `KPATHSEA_SRC_DIR` if set, otherwise are
+/// fetched at build time from TeX Live's source mirror at a pinned commit (the
+/// same commit latexml-oxide's `build_static_kpathsea.sh` uses on Linux/macOS,
+/// matching `bindings_windows.rs`). Only OUR synthesized MSVC config headers
+/// ship in-tree (`msvc/`, all original — there is no `./configure` on MSVC).
+///
+/// Windows/MSVC only (the config headers target the MSVC feature set); returns
+/// `false` on any other target (and warns) so the caller falls through to the
+/// normal probe order. A *build* failure (bad fetch / compile error) is a hard
+/// error — the feature is an explicit opt-in. See `msvc/README.md`.
+fn try_build_from_source() -> bool {
   if env::var("CARGO_CFG_TARGET_OS").as_deref() != Ok("windows")
     || env::var("CARGO_CFG_TARGET_ENV").as_deref() != Ok("msvc")
   {
     println!(
-      "cargo:warning=kpathsea_sys: `vendored` feature is enabled but the target \
+      "cargo:warning=kpathsea_sys: `build_from_source` is enabled but the target \
        is not *-pc-windows-msvc; ignoring it and using the normal probe order."
     );
     return false;
   }
 
   let manifest = PathBuf::from(env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR not set"));
-  let vendor = manifest.join("vendor");
-  let src = vendor.join("kpathsea");
-  println!("cargo:rerun-if-changed={}", vendor.display());
+  let out_dir = PathBuf::from(env::var("OUT_DIR").expect("OUT_DIR not set"));
+  let msvc = manifest.join("msvc");
+  println!("cargo:rerun-if-changed={}", msvc.display());
+  println!("cargo:rerun-if-env-changed=KPATHSEA_SRC_DIR");
+
+  // Locate the kpathsea C source (the `texk/kpathsea` directory): explicit
+  // `KPATHSEA_SRC_DIR` (offline / pre-fetched), else fetch it.
+  let src = match env::var_os("KPATHSEA_SRC_DIR") {
+    Some(dir) => PathBuf::from(dir),
+    None => match fetch_kpathsea_src(&out_dir) {
+      Some(dir) => dir,
+      None => {
+        println!(
+          "cargo:warning=kpathsea_sys: build_from_source could not obtain the \
+           kpathsea source (git fetch failed and KPATHSEA_SRC_DIR is unset); \
+           set KPATHSEA_SRC_DIR to a texk/kpathsea tree."
+        );
+        return false;
+      }
+    },
+  };
+  if !src.join("tex-file.c").is_file() {
+    println!(
+      "cargo:warning=kpathsea_sys: {} is not a kpathsea source dir (no tex-file.c).",
+      src.display()
+    );
+    return false;
+  }
 
   let mut build = cc::Build::new();
   build
-    // Include order matters: `generated/kpathsea` wins for the synthesized
-    // c-auto.h + paths.h; `vendor/` is the root for `<kpathsea/*.h>`; `src`
-    // resolves sibling-style bare includes (getopt.h); `generated/` also holds
-    // the bare `config.h` shim.
-    .include(vendor.join("generated"))
-    .include(&vendor)
+    // Include order: `msvc/` wins for the synthesized c-auto.h + paths.h and the
+    // bare `config.h` shim; the source's parent is the root for `<kpathsea/*.h>`;
+    // the source dir resolves sibling-style bare includes (getopt.h).
+    .include(&msvc)
+    .include(src.parent().unwrap_or(&src))
     .include(&src)
     // MAKE_KPSE_DLL marks "compiling libkpathsea itself" (exposes internal
     // `static inline` helpers gated behind it). NO_KPSE_DLL keeps KPSEDLL
@@ -168,22 +198,9 @@ fn try_vendored() -> bool {
     .define("_CRT_SECURE_NO_WARNINGS", None)
     .define("_CRT_NONSTDC_NO_WARNINGS", None)
     .warnings(false);
-
-  let Ok(entries) = std::fs::read_dir(&src) else {
-    return false;
-  };
-  let mut n = 0;
-  for e in entries.flatten() {
-    let p = e.path();
-    if p.extension().and_then(|x| x.to_str()) == Some("c") {
-      build.file(&p);
-      n += 1;
-    }
+  for f in KPATHSEA_MSVC_SOURCES {
+    build.file(src.join(f));
   }
-  if n == 0 {
-    return false;
-  }
-
   // Emits `cargo:rustc-link-search` + `cargo:rustc-link-lib=static=kpathsea`.
   build.compile("kpathsea");
   // OS imports referenced by win32lib.c / knj.c / hash.c / db.c.
@@ -191,10 +208,66 @@ fn try_vendored() -> bool {
   println!("cargo:rustc-link-lib=user32"); // CharLowerA
   println!("cargo:rustc-link-lib=advapi32"); // GetUserNameA
   println!(
-    "cargo:warning=kpathsea_sys: linked static libkpathsea from vendored sources \
-     ({n} .c files) — in-process, self-contained (no kpathsealibw64.dll)."
+    "cargo:warning=kpathsea_sys: built static libkpathsea from source ({} .c files) \
+     — in-process, self-contained (no kpathsealibw64.dll).",
+    KPATHSEA_MSVC_SOURCES.len()
   );
   true
+}
+
+/// The Windows/MSVC compile set: kpathsea `Makefile.am` base `libkpathsea_la_SOURCES`
+/// + `getopt`/`getopt1` + the WIN32-non-MinGW units `win32lib`/`knj`. The `win32/`
+/// mktex* on-the-fly *generation* helpers are omitted — this is a lookup-only build.
+const KPATHSEA_MSVC_SOURCES: &[&str] = &[
+  "tex-file.c", "absolute.c", "atou.c", "cnf.c", "concat.c", "concat3.c", "concatn.c",
+  "db.c", "debug.c", "dir.c", "elt-dirs.c", "expand.c", "extend-fname.c", "file-p.c",
+  "find-suffix.c", "fn.c", "fontmap.c", "hash.c", "kdefault.c", "kpathsea.c", "line.c",
+  "magstep.c", "make-suffix.c", "path-elt.c", "pathsearch.c", "proginit.c", "progname.c",
+  "readable.c", "rm-suffix.c", "str-list.c", "str-llist.c", "tex-glyph.c", "tex-hush.c",
+  "tex-make.c", "tilde.c", "uppercasify.c", "variable.c", "version.c", "xbasename.c",
+  "xcalloc.c", "xdirname.c", "xfopen.c", "xfseek.c", "xftell.c", "xgetcwd.c", "xmalloc.c",
+  "xopendir.c", "xputenv.c", "xrealloc.c", "xstat.c", "xstrdup.c", "getopt.c", "getopt1.c",
+  "win32lib.c", "knj.c",
+];
+
+/// kpathsea source pin: the TeX Live source-mirror commit whose kpathsea (6.4.1,
+/// TL2025) matches `bindings_windows.rs` — the same commit latexml-oxide's
+/// `build_static_kpathsea.sh` uses on Linux/macOS. Overridable via `KPSE_REF`.
+const KPSE_REF: &str = "def12ffd4d6e46bae03b3e5c7ff6f5f14dced3ab";
+
+/// Fetch `texk/kpathsea` from the TeX Live source mirror (sparse, shallow) at
+/// [`KPSE_REF`] into `<out>/kpathsea-src`, returning the `texk/kpathsea` path.
+/// Returns `None` on any git failure (no git, no network, bad ref). Idempotent:
+/// a prior fetch in the same `OUT_DIR` is reused.
+fn fetch_kpathsea_src(out: &std::path::Path) -> Option<PathBuf> {
+  let kpse_ref = env::var("KPSE_REF").unwrap_or_else(|_| KPSE_REF.to_string());
+  println!("cargo:rerun-if-env-changed=KPSE_REF");
+  let dir = out.join("kpathsea-src");
+  let src = dir.join("texk").join("kpathsea");
+  if src.join("tex-file.c").is_file() {
+    return Some(src); // reuse a prior fetch
+  }
+  let _ = std::fs::remove_dir_all(&dir);
+  std::fs::create_dir_all(&dir).ok()?;
+  println!(
+    "cargo:warning=kpathsea_sys: fetching kpathsea source @ {kpse_ref} \
+     (sparse, shallow) — set KPATHSEA_SRC_DIR to build offline."
+  );
+  let git = |args: &[&str]| -> bool {
+    std::process::Command::new("git")
+      .current_dir(&dir)
+      .args(args)
+      .status()
+      .map(|s| s.success())
+      .unwrap_or(false)
+  };
+  let ok = git(&["init", "-q"])
+    && git(&["remote", "add", "origin", "https://github.com/TeX-Live/texlive-source.git"])
+    && git(&["sparse-checkout", "init", "--cone"])
+    && git(&["sparse-checkout", "set", "texk/kpathsea"])
+    && git(&["fetch", "--depth", "1", "--filter=blob:none", "origin", &kpse_ref])
+    && git(&["checkout", "-q", "FETCH_HEAD"]);
+  (ok && src.join("tex-file.c").is_file()).then_some(src)
 }
 
 /// Windows: TeX Live ships its kpathsea as a DLL next to `kpsewhich.exe`
