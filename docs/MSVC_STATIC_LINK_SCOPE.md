@@ -7,11 +7,19 @@
 > crate is MIT/Apache, so the LGPL sources are NOT bundled — `build.rs` fetches
 > them at build time (pinned `KPSE_REF` = 6.4.1, matching the bindings + Linux/
 > macOS `build_static_kpathsea.sh`) or takes them from `KPATHSEA_SRC_DIR`. Only
-> the original MSVC config headers ship in-tree (`msvc/`). The feature was
-> renamed `vendored` → `build_from_source`. Everything below about the *compile*
-> recipe still holds; only the source *acquisition* changed from vendored-tree to
-> fetch. A statically-linked binary still carries LGPL §6 obligations (same as
-> the existing Linux/macOS static legs) — see `msvc/README.md`.
+> the original config headers ship in-tree (`common/`, `msvc/`, `unix/`). The
+> feature was renamed `vendored` → `build_from_source`. Everything below about
+> the *compile* recipe still holds; only the source *acquisition* changed from
+> vendored-tree to fetch. A statically-linked binary still carries LGPL §6
+> obligations (same as the existing Linux/macOS static legs) — see
+> `common/README.md`.
+>
+> **Update (2026-07-14): also on Unix.** `build_from_source` was generalized past
+> windows-msvc to a Unix leg (its own `unix/kpathsea/c-auto.h`, the base compile
+> set with `xfseeko`/`xftello` swapped in for `win32lib`/`knj`), verified
+> in-process on Linux/glibc. On Unix the packaged `libkpathsea-dev` is still the
+> normal route; this is the portable, pinned fallback. The recipe below stays
+> Windows/MSVC-specific.
 **Goal:** let a Windows/MSVC build link libkpathsea **statically and
 in-process** (`KPATHSEA_STATIC`), so downstream binaries (e.g. latexml-oxide's
 Windows release `.exe`) get fast in-process file lookups **and** stay

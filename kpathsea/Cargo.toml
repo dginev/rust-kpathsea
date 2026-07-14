@@ -15,9 +15,9 @@ Rust interface to the kpathsea TeX file management library.
 name = "kpathsea"
 
 [features]
-# Forward kpathsea_sys's static build-from-source link. On *-pc-windows-msvc this
-# fetches + compiles a static libkpathsea for an in-process, self-contained link
-# (no runtime kpathsealibw64.dll); inert elsewhere. Off by default.
+# Forward kpathsea_sys's static build-from-source link: fetch + compile a static
+# libkpathsea for an in-process, self-contained link (on Windows, no runtime
+# kpathsealibw64.dll). Supported on windows-msvc and Unix; off by default.
 build-from-source = ["kpathsea_sys/build_from_source"]
 
 [dependencies]
