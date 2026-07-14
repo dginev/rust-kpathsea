@@ -1,5 +1,23 @@
 # Change Log
 
+## [0.3.3] 2026-07-14 — build_from_source: fix `_stat64i32` LNK2005 under static CRT + LTO
+
+* **`kpathsea_sys` 0.2.3 — the `build_from_source` static link now works under
+  `+crt-static` + fat-LTO.** The MSVC leg compiles `win32lib.c` with
+  `-D_CRT_DECLARE_NONSTDC_NAMES=0`. Without it, `win32lib.h`'s `#define stat
+  _stat` combined with the UCRT's `#define _stat _stat64i32` (`sys/stat.h`)
+  rewrote the NAME of the UCRT's POSIX `stat()` compatibility wrapper to
+  `_stat64i32`, so `win32lib.o` emitted its own `_stat64i32` definition — which
+  collides with the real (static-CRT) `_stat64i32` (`LNK2005`) in a downstream
+  `+crt-static` + fat-LTO release link. It surfaces ONLY in such a release link
+  (not a plain `cargo build`) and only where the SDK makes the wrapper external
+  (`_CRT_NONSTANDARD_STATIC`). Disabling the UCRT's POSIX-name compat wrappers —
+  which `win32lib.h` already re-provides via its own `_`-prefixed remapping —
+  drops the mangled definition entirely (`win32lib.o` now merely *references* the
+  real `_stat64i32`, 0 definitions). Fixes `dginev/latexml-oxide`'s Windows
+  release `.exe`. No API change; only affects the opt-in Windows-MSVC
+  `build_from_source` leg.
+
 ## [0.3.2] 2026-07-14 — subprocess backend: never block on MiKTeX's on-the-fly installer
 
 * **The subprocess backend no longer deadlocks on MiKTeX package installation.**

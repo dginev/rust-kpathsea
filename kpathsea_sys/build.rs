@@ -153,6 +153,18 @@ fn try_build_from_source() -> bool {
         "NO_KPSE_DLL",
         "_CRT_SECURE_NO_WARNINGS",
         "_CRT_NONSTDC_NO_WARNINGS",
+        // Drop the UCRT's POSIX-name compat wrappers (`stat`, `fstat`, `open`,
+        // …). win32lib.h already `#define`s those POSIX names to the `_`-prefixed
+        // CRT entry points, so the wrappers are unused here — and worse,
+        // win32lib.h's `#define stat _stat` combined with the UCRT's `#define
+        // _stat _stat64i32` rewrites the wrapper's NAME to `_stat64i32`, so
+        // win32lib.o emits a strong `_stat64i32` that collides with the real
+        // (static-CRT) one under `+crt-static` + fat-LTO (LNK2005 — surfaces only
+        // in a downstream maxperf/LTO release link, not a plain `cargo build`).
+        // Setting this to 0 forces corecrt.h's `_CRT_INTERNAL_NONSTDC_NAMES` to
+        // 0, which gates those wrappers off. Fixes dginev/latexml-oxide's Windows
+        // release .exe.
+        "_CRT_DECLARE_NONSTDC_NAMES=0",
       ],
       // OS imports: shell32 (CommandLineToArgvW), user32 (CharLowerA),
       // advapi32 (GetUserNameA), pulled in by win32lib.c / knj.c / hash.c.
@@ -221,7 +233,12 @@ fn try_build_from_source() -> bool {
     .define("MAKE_KPSE_DLL", None)
     .warnings(false);
   for d in leg.defines {
-    build.define(d, None);
+    // Support `NAME=VALUE` entries (e.g. `_CRT_DECLARE_NONSTDC_NAMES=0`), not
+    // only valueless `-DNAME`.
+    match d.split_once('=') {
+      Some((name, value)) => build.define(name, value),
+      None => build.define(d, None),
+    };
   }
   for f in KPATHSEA_COMMON_SOURCES.iter().chain(leg.sources) {
     build.file(src.join(f));

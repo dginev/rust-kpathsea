@@ -1,6 +1,6 @@
 [package]
 name = "kpathsea"
-version = "0.3.2"
+version = "0.3.3"
 authors = ["Deyan Ginev <deyan.ginev@gmail.com>", "Emily Eisenberg <xymostech@gmail.com>"]
 edition = "2024"
 license = "MIT OR Apache-2.0"
@@ -21,7 +21,7 @@ name = "kpathsea"
 build-from-source = ["kpathsea_sys/build_from_source"]
 
 [dependencies]
-kpathsea_sys = { version = "0.2.2", path = "../kpathsea_sys" }
+kpathsea_sys = { version = "0.2.3", path = "../kpathsea_sys" }
 which = "8"
 
 [build-dependencies]
