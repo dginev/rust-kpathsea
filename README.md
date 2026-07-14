@@ -18,7 +18,10 @@ Two backends, selected automatically at build time;
 * **in-process** — FFI into `libkpathsea`; microsecond lookups. Linked
   via `pkg-config` or `KPATHSEA_LIB_DIR`; on Windows, TeX Live's own
   `kpathsealibw64.dll` is located next to `kpsewhich.exe` and linked
-  directly — no headers or import library required.
+  directly — no headers or import library required. The opt-in
+  `build-from-source` feature instead fetches and statically compiles
+  libkpathsea for a self-contained binary — no system library or runtime
+  DLL — chiefly for Windows, also on Unix.
 * **subprocess** — delegates to the host's `kpsewhich`, fronted by a
   process-global cache of the `ls-R` databases, following Perl LaTeXML's
   resolution strategy. Remains correct on distributions that reimplement

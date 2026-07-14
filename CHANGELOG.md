@@ -1,6 +1,6 @@
 # Change Log
 
-## [0.3.1] (in development)
+## [0.3.1] 2026-07-14 — opt-in `build_from_source`; kpathsea_sys 0.2.2
 
 * **`kpathsea_sys` 0.2.2 — new opt-in `build_from_source` feature.** Builds a
   static libkpathsea from source with `cc` instead of locating a system/DLL
