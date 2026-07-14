@@ -67,6 +67,10 @@ struct SharedKpse {
   /// Locked only on the `lsr`-miss path, where the alternative is a
   /// ~150ms spawn.
   memo: Mutex<HashMap<String, Option<String>>>,
+  /// Flags prepended to EVERY direct `kpsewhich` call for this executable —
+  /// empty on most distributions, `["--miktex-disable-installer"]` on MiKTeX.
+  /// Computed once (see [`probe_installer_args`]); immutable after build.
+  installer_args: Vec<String>,
 }
 
 /// One [`SharedKpse`] per `kpsewhich` executable — Perl's `$kpse_cache`
@@ -88,6 +92,7 @@ fn shared_kpse(kpsewhich: &Path) -> Arc<SharedKpse> {
   let built = Arc::new(SharedKpse {
     lsr: build_kpse_cache(kpsewhich),
     memo: Mutex::new(HashMap::new()),
+    installer_args: probe_installer_args(kpsewhich),
   });
   let mut registry = KPSE_REGISTRY.lock().unwrap_or_else(PoisonError::into_inner);
   Arc::clone(registry.entry(kpsewhich.to_path_buf()).or_insert(built))
@@ -202,7 +207,13 @@ impl SubprocessKpse {
     // The memo lock is NOT held during the spawn: concurrent lookups of
     // the same unmemoized query may each spawn once (benign — identical
     // results, last insert wins).
+    //
+    // `installer_args` (empty except on MiKTeX) is prepended so a request for
+    // a not-installed package can never trigger MiKTeX's blocking on-the-fly
+    // installer. It is constant per executable, so it is NOT part of the memo
+    // key (which distinguishes queries, not the fixed prefix).
     let result = Command::new(&self.kpsewhich)
+      .args(&self.shared().installer_args)
       .args(flags)
       .args(&names)
       .output()
@@ -227,6 +238,38 @@ impl SubprocessKpse {
       .memo
       .lock()
       .unwrap_or_else(PoisonError::into_inner)
+  }
+}
+
+/// One-time probe: the flags to prepend to every `kpsewhich` call for this
+/// executable so a lookup can never block on package installation.
+///
+/// MiKTeX's `kpsewhich` triggers its **on-the-fly package installer** when
+/// asked for a file whose package is known to the distribution but not
+/// installed. With the default `[MPM]AutoInstall = Ask`, that raises a blocking
+/// (interactive) prompt — which deadlocks a non-interactive caller until an
+/// outer timeout kills it. MiKTeX accepts `--miktex-disable-installer` to turn
+/// the installer off for the invocation, so a missing package resolves to "not
+/// found" immediately instead (graceful degradation, no prompt).
+///
+/// TeX Live's `kpsewhich` REJECTS the option (`unrecognized option`, non-zero
+/// exit), so it must be applied only where accepted. We detect that by capability
+/// rather than by matching a distribution name: `--version` performs no file
+/// lookup (so the probe itself can never trigger the installer), and a zero exit
+/// means the flag is understood. Runs once per executable, at [`shared_kpse`]
+/// construction; the result is stored on [`SharedKpse`] and reused for every
+/// later lookup — no per-call detection.
+fn probe_installer_args(kpsewhich: &Path) -> Vec<String> {
+  let accepts = Command::new(kpsewhich)
+    .arg("--miktex-disable-installer")
+    .arg("--version")
+    .output()
+    .map(|out| out.status.success())
+    .unwrap_or(false);
+  if accepts {
+    vec!["--miktex-disable-installer".to_string()]
+  } else {
+    Vec::new()
   }
 }
 

@@ -1,5 +1,22 @@
 # Change Log
 
+## [0.3.2] 2026-07-14 — subprocess backend: never block on MiKTeX's on-the-fly installer
+
+* **The subprocess backend no longer deadlocks on MiKTeX package installation.**
+  MiKTeX's `kpsewhich` triggers its on-the-fly package installer when asked for a
+  file whose package is known to the distribution but not installed; with the
+  default `[MPM]AutoInstall = Ask` this raises a blocking (often interactive)
+  prompt that hangs a non-interactive caller until an outer timeout kills it. The
+  subprocess backend now prepends `--miktex-disable-installer` to every
+  `kpsewhich` call on MiKTeX, so a missing package resolves to "not found"
+  immediately (graceful degradation) instead of prompting. The option is detected
+  once per executable by **capability probe** — `kpsewhich
+  --miktex-disable-installer --version`, which does no file lookup and so cannot
+  itself trigger the installer; a zero exit means the flag is understood. TeX Live
+  (and any distro that rejects the option) is unaffected — the prepended prefix is
+  empty. No API change; installed-file resolution is unchanged. Motivated by
+  `dginev/latexml-oxide`'s Windows release on MiKTeX hosts.
+
 ## [0.3.1] 2026-07-14 — opt-in `build_from_source`; kpathsea_sys 0.2.2
 
 * **`kpathsea_sys` 0.2.2 — new opt-in `build_from_source` feature.** Builds a
