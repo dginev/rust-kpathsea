@@ -18,6 +18,12 @@
 #  * Windows, forced subprocess (KPATHSEA_NO_LINK) — exercises the
 #    subprocess backend's Windows path semantics (`;` path-list
 #    separator, drive-letter paths, .exe lookup through PATHEXT).
+#  * Linux + Windows ALSO run the opt-in `build_from_source` feature
+#    (fetch the kpathsea sources + cc-compile a static libkpathsea,
+#    linked in-process) against the same TeX tree — so the from-source
+#    backend is regression-guarded on both the Unix and MSVC legs.
+#    macOS is left to manual verification: the Unix leg's c-auto.h is
+#    glibc-tuned and only best-effort on Darwin.
 #
 # Tests deliberately run with cargo's default parallelism — the old
 # Travis config needed RUST_TEST_THREADS=1 to dodge the concurrent
@@ -38,7 +44,7 @@ env:
 
 jobs:
   linux:
-    name: Linux (linked + forced-unlinked)
+    name: Linux (linked + unlinked + from-source)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -61,6 +67,13 @@ jobs:
         env:
           KPATHSEA_NO_LINK: "1"
           CARGO_TARGET_DIR: target-unlinked
+      - name: Test (build_from_source — static in-process, fetched sources)
+        run: |
+          cargo build -p kpathsea --features build-from-source 2>&1 | tee bfs.log
+          grep -q "built static libkpathsea from source" bfs.log
+          cargo test -p kpathsea --features build-from-source
+        env:
+          CARGO_TARGET_DIR: target-bfs
 
   macos:
     name: macOS (BasicTeX, subprocess backend)
@@ -100,7 +113,7 @@ jobs:
         run: cargo test
 
   windows-linked:
-    name: Windows (TL kpathsea DLL, linked in-process)
+    name: Windows (DLL-linked in-process + from-source)
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v7
@@ -118,6 +131,14 @@ jobs:
           grep -q "linking TeX Live's" build.log
       - name: Test
         run: cargo test
+      - name: Test (build_from_source — static in-process, fetched sources)
+        shell: bash
+        run: |
+          cargo build -p kpathsea --features build-from-source 2>&1 | tee bfs.log
+          grep -q "built static libkpathsea from source" bfs.log
+          cargo test -p kpathsea --features build-from-source
+        env:
+          CARGO_TARGET_DIR: target-bfs
 
   windows-subprocess:
     name: Windows (forced subprocess backend)
