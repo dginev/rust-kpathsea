@@ -1,5 +1,29 @@
 # Change Log
 
+## [0.3.4] 2026-07-19 — a linked `Kpaths::new()` can no longer fail; `TEXINPUTS` honored with no usable `kpsewhich`
+
+* **On a linked build, `Kpaths::new()` no longer fails when the host's
+  `kpsewhich` cannot be resolved — so `TEXINPUTS` &c. are always honored.**
+  It previously anchored `kpathsea_set_program_name` on that executable and
+  returned `Err` without it, leaving the linked `libkpathsea` uninitialized:
+  every lookup returned `None` and env-var search paths were silently ignored,
+  though the library is present in the binary and needs no TeX distribution to
+  serve them. The failure is invisible to a caller with its own
+  bindings/caches — only *raw* file lookups vanish.
+
+  Resolution fails for more reasons than "no TeX installed": absent from this
+  process's `PATH` (as opposed to the user's interactive shell), a stale
+  `KPSEWHICH` override, present but not executable, or a `kpsewhich.exe` beside
+  a Linux binary under WSL.
+
+  The anchor now degrades instead: `kpsewhich` → `std::env::current_exe` → a
+  literal. Only TeX-*distribution* discovery depends on it, so a degraded anchor
+  costs nothing that was reachable anyway; with a resolvable `kpsewhich`,
+  behavior is unchanged. The subprocess backend is untouched, and `new()` keeps
+  its `Result` for API stability and the unlinked build. Guarded by
+  `tests/texinputs_fallback.rs` and the `anchor_tiers` unit tests. Motivated by
+  `dginev/latexml-oxide#304`.
+
 ## [0.3.3] 2026-07-14 — build_from_source: fix `_stat64i32` LNK2005 under static CRT + LTO
 
 * **`kpathsea_sys` 0.2.3 — the `build_from_source` static link now works under

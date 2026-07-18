@@ -138,12 +138,79 @@ fn kpsewhich_executable() -> Result<PathBuf> {
   which::which(&name).map_err(|_| "Error finding kpsewhich executable")
 }
 
+/// A path as a `CString`, for `kpathsea_set_program_name`.
+#[cfg(kpathsea_linked)]
+fn path_to_cstring(path: PathBuf) -> Result<CString> {
+  CString::new(path.to_string_lossy().into_owned()).map_err(|_| "path contains a NUL byte")
+}
+
 /// [`kpsewhich_executable`] as a `CString`, for `kpathsea_set_program_name`.
 #[cfg(kpathsea_linked)]
 fn get_kpsewhich_path() -> Result<CString> {
-  let kpsewhich_path = kpsewhich_executable()?;
-  CString::new(kpsewhich_path.to_string_lossy().into_owned())
-    .map_err(|_| "kpsewhich path contains a NUL byte")
+  path_to_cstring(kpsewhich_executable()?)
+}
+
+/// The running executable's path as a `CString` — the second-choice anchor.
+#[cfg(kpathsea_linked)]
+fn current_exe_program_name() -> Result<CString> {
+  path_to_cstring(std::env::current_exe().map_err(|_| "current executable path is unavailable")?)
+}
+
+/// The program name to anchor libkpathsea on, degrading but never failing:
+/// `kpsewhich` (which also locates the TeX distribution) → the running
+/// executable → a literal.
+///
+/// Refusing to initialize is worse than a degraded anchor: an uninitialized
+/// libkpathsea returns `None` for every lookup and ignores `TEXINPUTS` &c,
+/// which need no TeX distribution at all. Only distribution discovery depends
+/// on the anchor, so a linked [`Kpaths::new`] can always succeed.
+///
+/// Both sources are injected so every tier is testable — `current_exe()` does
+/// not fail on a live system.
+#[cfg(kpathsea_linked)]
+fn program_name_anchor(
+  kpsewhich: Result<CString>,
+  current_exe: impl FnOnce() -> Result<CString>,
+) -> CString {
+  kpsewhich
+    .or_else(|_| current_exe())
+    .unwrap_or_else(|_| CString::from(c"kpsewhich"))
+}
+
+/// Every tier degrades without failing — what makes a linked
+/// [`Kpaths::new`] infallible.
+#[cfg(all(test, kpathsea_linked))]
+mod anchor_tiers {
+  use super::*;
+
+  #[test]
+  fn prefers_kpsewhich_and_leaves_current_exe_unevaluated() {
+    let mut consulted = false;
+    let got = program_name_anchor(Ok(CString::new("/usr/bin/kpsewhich").unwrap()), || {
+      consulted = true;
+      Ok(CString::new("/proc/self/exe").unwrap())
+    });
+    assert_eq!(got.to_str().unwrap(), "/usr/bin/kpsewhich");
+    assert!(
+      !consulted,
+      "current_exe must not be consulted when kpsewhich resolves"
+    );
+  }
+
+  #[test]
+  fn degrades_to_current_exe_when_kpsewhich_is_unresolvable() {
+    let got = program_name_anchor(Err("no kpsewhich"), || {
+      Ok(CString::new("/proc/self/exe").unwrap())
+    });
+    assert_eq!(got.to_str().unwrap(), "/proc/self/exe");
+  }
+
+  #[test]
+  fn degrades_to_a_literal_when_every_source_fails() {
+    // Previously propagated `Err`, leaving libkpathsea uninitialized.
+    let got = program_name_anchor(Err("no kpsewhich"), || Err("no current_exe"));
+    assert_eq!(got.to_str().unwrap(), "kpsewhich");
+  }
 }
 
 /// libkpathsea's `kpse_set_program_name` mutates process-global state:
@@ -313,6 +380,11 @@ impl Kpaths {
   /// linked at build time, and the subprocess-`kpsewhich` backend
   /// otherwise. Use [`Kpaths::is_in_process`] to inspect the choice.
   ///
+  /// **On a linked build this never returns `Err`** — the program-name anchor
+  /// degrades instead (see [`program_name_anchor`]). The `Result` remains for
+  /// API stability and for the unlinked build, where the subprocess backend
+  /// has nothing to shell out to without a `kpsewhich`.
+  ///
   /// Construction itself is cheap (measured ~0.1ms, serialized
   /// process-wide on the in-process backend because
   /// `kpse_set_program_name` mutates global state). The expensive step on
@@ -326,19 +398,16 @@ impl Kpaths {
   pub fn new() -> Result<Self> {
     #[cfg(kpathsea_linked)]
     {
-      // kpathsea says we should pass in the current executable name to
-      // kpathsea_set_program_name, but there are cases where this causes
-      // kpathsea to fail to find the available TeX distribution. Instead, we use
-      // the location of the kpsewhich executable, which ensures that we find the
-      // correct TeX distribution.
-      let kpsewhich_path = get_kpsewhich_path()?;
+      // Prefer the `kpsewhich` location: kpathsea suggests our own executable
+      // name, but that can miss the available TeX distribution.
+      let program_name = program_name_anchor(get_kpsewhich_path(), current_exe_program_name);
 
       // Serialized: see KPSE_GLOBAL_LOCK.
       let _guard = KPSE_GLOBAL_LOCK
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
       let kpse = unsafe { kpathsea_new() };
-      unsafe { kpathsea_set_program_name(kpse, kpsewhich_path.as_ptr(), std::ptr::null()) }
+      unsafe { kpathsea_set_program_name(kpse, program_name.as_ptr(), std::ptr::null()) }
       Ok(Kpaths(Backend::InProcess(kpse)))
     }
     #[cfg(not(kpathsea_linked))]

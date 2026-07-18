@@ -1,6 +1,6 @@
 [package]
 name = "kpathsea"
-version = "0.3.3"
+version = "0.3.4"
 authors = ["Deyan Ginev <deyan.ginev@gmail.com>", "Emily Eisenberg <xymostech@gmail.com>"]
 edition = "2024"
 license = "MIT OR Apache-2.0"
