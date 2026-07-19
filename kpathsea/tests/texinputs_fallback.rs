@@ -8,6 +8,12 @@
 use kpathsea::Kpaths;
 use std::io::Write;
 
+/// kpathsea returns forward slashes and a lowercased drive letter on Windows,
+/// so paths are compared normalized rather than byte for byte.
+fn normalized(path: &str) -> String {
+  path.replace('\\', "/").to_lowercase()
+}
+
 #[test]
 fn texinputs_honored_without_kpsewhich() {
   // Detect the active backend from a normal construction (real environment,
@@ -30,9 +36,12 @@ fn texinputs_honored_without_kpsewhich() {
   writeln!(std::fs::File::create(&file).unwrap(), "% probe").unwrap();
 
   // TEXINPUTS is read lazily on the first lookup, so set it before constructing.
+  // The trailing separator appends kpathsea's own default path; it is `;` on
+  // Windows, where `:` belongs to the drive letter and would split the entry.
   // SAFETY: this is the only test in this integration binary, so no other
   // thread mutates the environment concurrently.
-  unsafe { std::env::set_var("TEXINPUTS", format!("{}:", dir.display())) };
+  let sep = if cfg!(windows) { ';' } else { ':' };
+  unsafe { std::env::set_var("TEXINPUTS", format!("{}{sep}", dir.display())) };
 
   // Every way `kpsewhich_executable()` can fail: a nonexistent absolute path,
   // a bare name that is nowhere on PATH, an empty override, and a real file
@@ -56,8 +65,11 @@ fn texinputs_honored_without_kpsewhich() {
       "expected the in-process backend to survive KPSEWHICH={bogus:?}"
     );
     assert_eq!(
-      kpse.find_file("lxo_texinputs_probe.tex").as_deref(),
-      Some(file.to_string_lossy().as_ref()),
+      kpse
+        .find_file("lxo_texinputs_probe.tex")
+        .as_deref()
+        .map(normalized),
+      Some(normalized(&file.to_string_lossy())),
       "a TEXINPUTS-only file must resolve through the fallback-anchored libkpathsea \
        with KPSEWHICH={bogus:?}"
     );
