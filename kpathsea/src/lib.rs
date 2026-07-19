@@ -169,8 +169,14 @@ fn current_exe_program_name() -> Result<CString> {
 ///
 /// Refusing to initialize is worse than a degraded anchor: an uninitialized
 /// libkpathsea returns `None` for every lookup and ignores `TEXINPUTS` &c,
-/// which need no TeX distribution at all. Only distribution discovery depends
-/// on the anchor, so a linked [`Kpaths::new`] can always succeed.
+/// which need no TeX distribution at all. So a linked [`Kpaths::new`] can
+/// always succeed.
+///
+/// How much a degraded anchor still resolves is platform-dependent. On Unix it
+/// only costs TeX-*distribution* discovery, and env-var search paths keep
+/// working. On Windows the anchor also governs where `texmf.cnf` is looked for,
+/// so an anchor outside the distribution finds no config and resolves nothing —
+/// initialized but inert, which is still better than the `Err` this replaces.
 ///
 /// Both sources are injected so every tier is testable — `current_exe()` does
 /// not fail on a live system.

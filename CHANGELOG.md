@@ -17,16 +17,18 @@
   a Linux binary under WSL.
 
   The anchor now degrades instead: `kpsewhich` → `std::env::current_exe` → a
-  literal. Only TeX-*distribution* discovery depends on it, so a degraded anchor
-  costs nothing that was reachable anyway; with a resolvable `kpsewhich`,
-  behavior is unchanged. Note the degraded anchor restores env-var resolution
-  on Unix but not on Windows, where kpathsea locates `texmf.cnf` relative to
-  the program name: an anchor outside the distribution finds no config, so the
-  library initializes but resolves nothing. That is still strictly better than
-  the previous `Err`, and unchanged whenever a `kpsewhich` exists. The subprocess backend is untouched, and `new()` keeps
-  its `Result` for API stability and the unlinked build. Guarded by
-  `tests/texinputs_fallback.rs` and the `anchor_tiers` unit tests. Motivated by
-  `dginev/latexml-oxide#304`.
+  literal; with a resolvable `kpsewhich`, behavior is unchanged.
+
+  How much a degraded anchor still resolves is platform-dependent. On Unix it
+  costs only TeX-*distribution* discovery — nothing that was reachable anyway —
+  and env-var search paths keep working. On Windows the anchor also governs
+  where `texmf.cnf` is looked for, so an anchor outside the distribution finds
+  no config and resolves nothing: initialized but inert, still better than the
+  `Err` it replaces.
+
+  The subprocess backend is untouched, and `new()` keeps its `Result` for API
+  stability and the unlinked build. Guarded by `tests/texinputs_fallback.rs`
+  and the `anchor_tiers` unit tests. Motivated by `dginev/latexml-oxide#304`.
 
 * **The one unrecoverable configuration now fails loudly.** With no linked
   `libkpathsea` AND no `kpsewhich` to spawn, nothing can ever resolve, so
