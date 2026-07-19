@@ -39,6 +39,13 @@ use subprocess::SubprocessKpse;
 /// External result type for handling library errors
 pub type Result<T> = std::result::Result<T, &'static str>;
 
+/// The one unrecoverable configuration: no linked `libkpathsea` to call and no
+/// `kpsewhich` executable to spawn, so nothing can ever be resolved.
+#[cfg(not(kpathsea_linked))]
+const NO_BACKEND: &str = "kpathsea: no libkpathsea is linked and no `kpsewhich` executable is \
+                          available — TeX file lookups cannot resolve. Install a TeX distribution, \
+                          or point KPSEWHICH at its kpsewhich.";
+
 /// Kpathsea file-format type, for callers of
 /// [`Kpaths::find_file_with_format`] that want to pass a known format.
 ///
@@ -412,7 +419,15 @@ impl Kpaths {
     }
     #[cfg(not(kpathsea_linked))]
     {
-      Self::new_subprocess()
+      Self::new_subprocess().map_err(|_| {
+        // Terminal: neither backend exists, so NO file can ever resolve. Say so
+        // on stderr as well as in the `Err` — callers routinely `.ok()` an error
+        // away, and a silently inert resolver is indistinguishable from a TeX
+        // tree that simply lacks the file.
+        static ONCE: std::sync::Once = std::sync::Once::new();
+        ONCE.call_once(|| eprintln!("{NO_BACKEND}"));
+        NO_BACKEND
+      })
     }
   }
 

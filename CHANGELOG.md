@@ -28,6 +28,14 @@
   `tests/texinputs_fallback.rs` and the `anchor_tiers` unit tests. Motivated by
   `dginev/latexml-oxide#304`.
 
+* **The one unrecoverable configuration now fails loudly.** With no linked
+  `libkpathsea` AND no `kpsewhich` to spawn, nothing can ever resolve, so
+  `Kpaths::new()` returns an error naming both missing backends and prints it
+  once to stderr — instead of the previous terse "Error finding kpsewhich
+  executable", which callers routinely `.ok()` into silence, leaving an inert
+  resolver indistinguishable from a TeX tree that simply lacks the file.
+  Guarded by `tests/no_backend.rs`.
+
 ## [0.3.3] 2026-07-14 — build_from_source: fix `_stat64i32` LNK2005 under static CRT + LTO
 
 * **`kpathsea_sys` 0.2.3 — the `build_from_source` static link now works under
