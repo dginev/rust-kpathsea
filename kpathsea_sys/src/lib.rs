@@ -2,6 +2,14 @@
 #![allow(non_camel_case_types)]
 #![allow(non_snake_case)]
 #![allow(missing_docs)]
+// Stable rustc (>=1.98, Aug 2026) added `suspicious_runtime_symbol_definitions`, which under
+// `cargo clippy -- -D warnings` reddens the bindgen `strlen` FFI declaration in `bindings.rs`
+// (generated `-> c_ulong` where std expects `-> usize`). `bindings.rs` is `include!`d only for
+// linked, non-Windows builds (see below), i.e. LP64/ILP32 targets where `c_ulong == usize`, so
+// the signature is ABI-compatible and the lint masks nothing (rustc's own help: "allow this lint
+// if the signature is compatible"); Windows LLP64 uses the hand-curated `bindings_windows.rs`.
+// Drop this once the vendored bindings are regenerated blocklisting the libc `strlen` shim.
+#![allow(suspicious_runtime_symbol_definitions)]
 
 // The bindgen surface exists only when `libkpathsea` was actually found:
 // without a library there is no ABI to describe, the `extern "C"`
