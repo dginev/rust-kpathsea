@@ -226,6 +226,215 @@ mod anchor_tiers {
   }
 }
 
+/// The `TEXMFCNF` this process appended a TeX Live tree to, if any (see [`texmfcnf_extension`]).
+#[cfg(kpathsea_linked)]
+static APPENDED_TEXMFCNF: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+
+/// The `TEXMFCNF` value a linked [`Kpaths::new`] set so that the library also reads the anchor's TeX Live `texmf.cnf`,
+/// or `None` when it set none (the usual case: the library's compiled-in directories already hold one, or the user
+/// set `TEXMFCNF`). For a caller's log, next to [`Kpaths::is_in_process`].
+pub fn appended_texmfcnf() -> Option<&'static str> {
+  #[cfg(kpathsea_linked)]
+  return APPENDED_TEXMFCNF.get().map(String::as_str);
+  #[cfg(not(kpathsea_linked))]
+  None
+}
+
+/// The `TEXMFCNF` that lets a linked library read the `texmf.cnf` of the install-tl tree it is anchored on, or `None`
+/// to leave its configuration search alone.
+///
+/// A distro-built library (Debian's `libkpathsea6`: `/etc/texmf/web2c:…:$SELFAUTOPARENT/share/texmf/web2c`) does not
+/// search install-tl's `$SELFAUTOPARENT/texmf-dist/web2c`; with no distro tree beside it, it finds no `texmf.cnf` and
+/// resolves nothing (dginev/latexml-oxide#948, a Docker image). Only then, when `selfautoparent` (kpathsea's own, from
+/// `kpathsea_set_program_name`) holds `texmf-dist/web2c/texmf.cnf` and the user set no `TEXMFCNF`, are TeX Live's
+/// own default directories of an install-tl tree (the subset an install-tl tree populates) appended, in its order (`$SELFAUTOGRANDPARENT/texmf-local/web2c`,
+/// `$SELFAUTOPARENT`, `$SELFAUTOPARENT/texmf-dist/web2c`). The leading `:` keeps the compiled-in default first.
+/// `TEXMFROOT`/`TEXMFDIST` do not steer where `texmf.cnf` is looked for (`CNF_ENVS`, tex-file.c), so they block
+/// nothing: the appended file then reads them as the anchor's own `kpsewhich` does. `default_finds_cnf` runs last and
+/// only once the rest holds: where the compiled-in default already finds a `texmf.cnf`, nothing is appended, since
+/// kpathsea would read a file found on both paths twice. Not on Windows, where the anchor already governs the search.
+#[cfg(kpathsea_linked)]
+#[cfg_attr(windows, allow(dead_code))]
+fn texmfcnf_extension(
+  selfautoparent: Option<&str>,
+  user_set: impl Fn(&str) -> bool,
+  is_file: impl Fn(&std::path::Path) -> bool,
+  default_finds_cnf: impl FnOnce() -> bool,
+) -> Option<String> {
+  if cfg!(windows) || user_set("TEXMFCNF") {
+    return None;
+  }
+  // Rebuilt from its components: a trailing or doubled `/` would join into `//`, kpathsea's recursive search.
+  let root: PathBuf = std::path::Path::new(selfautoparent?).components().collect();
+  let web2c = root.join("texmf-dist/web2c");
+  if !root.is_absolute() || !is_file(&web2c.join("texmf.cnf")) || default_finds_cnf() {
+    return None;
+  }
+  let local = root
+    .parent()
+    .map(|grandparent| grandparent.join("texmf-local/web2c"));
+  let dirs = local.iter().chain([&root, &web2c]);
+  let dirs: Vec<&str> = dirs.map(|dir| dir.to_str()).collect::<Option<_>>()?;
+  Some(format!(":{}", dirs.join(":")))
+}
+
+#[cfg(all(test, kpathsea_linked))]
+mod texmfcnf_extension_rule {
+  use super::*;
+  use std::path::Path;
+
+  const ROOT: &str = "/usr/local/texlive/2025";
+  const EXPECTED: &str = ":/usr/local/texlive/texmf-local/web2c:/usr/local/texlive/2025:\
+                          /usr/local/texlive/2025/texmf-dist/web2c";
+
+  /// The rule with a tree holding `texmf-dist/web2c/texmf.cnf` under [`ROOT`] and a compiled-in default that finds none.
+  fn extension(root: Option<&str>, user_set: impl Fn(&str) -> bool) -> Option<String> {
+    let cnf = Path::new(ROOT).join("texmf-dist/web2c/texmf.cnf");
+    texmfcnf_extension(root, user_set, |path| path == cnf, || false)
+  }
+
+  #[test]
+  #[ignore = "written against an install-tl TeX Live 2025 layout, not portable; run locally with `cargo test -- --ignored`"]
+  fn appends_the_install_tl_directories_after_the_default() {
+    let got = extension(Some(ROOT), |_| false);
+    assert_eq!(got.as_deref(), (!cfg!(windows)).then_some(EXPECTED));
+  }
+
+  #[test]
+  #[ignore = "written against an install-tl TeX Live 2025 layout, not portable; run locally with `cargo test -- --ignored`"]
+  fn a_trailing_or_doubled_slash_never_joins_into_a_recursive_element() {
+    for root in [
+      "/usr/local/texlive/2025/",
+      "/usr/local/texlive/2025//",
+      "/usr/local//texlive/2025",
+    ] {
+      let got = extension(Some(root), |_| false);
+      assert_eq!(
+        got.as_deref(),
+        (!cfg!(windows)).then_some(EXPECTED),
+        "{root}"
+      );
+    }
+  }
+
+  #[test]
+  #[ignore = "written against an install-tl TeX Live 2025 layout, not portable; run locally with `cargo test -- --ignored`"]
+  fn a_tree_at_the_file_system_root_has_no_grandparent() {
+    let got = texmfcnf_extension(Some("/"), |_| false, |_| true, || false);
+    let expected = ":/:/texmf-dist/web2c";
+    assert_eq!(got.as_deref(), (!cfg!(windows)).then_some(expected));
+  }
+
+  #[test]
+  #[ignore = "written against an install-tl TeX Live 2025 layout, not portable; run locally with `cargo test -- --ignored`"]
+  fn no_root_or_no_texmf_cnf_under_it_changes_nothing() {
+    assert_eq!(extension(None, |_| false), None);
+    assert_eq!(extension(Some("/usr"), |_| false), None);
+    assert_eq!(extension(Some("relative/2025"), |_| false), None);
+  }
+
+  #[test]
+  #[ignore = "written against an install-tl TeX Live 2025 layout, not portable; run locally with `cargo test -- --ignored`"]
+  fn only_a_user_texmfcnf_blocks_it() {
+    assert_eq!(extension(Some(ROOT), |var| var == "TEXMFCNF"), None);
+    // TEXMFROOT/TEXMFDIST steer the variables, not where texmf.cnf is looked for (latexml-oxide sets TEXMFROOT itself).
+    for var in ["TEXMFROOT", "TEXMFDIST", "TEXINPUTS"] {
+      let got = extension(Some(ROOT), |set| set == var);
+      assert_eq!(
+        got.as_deref(),
+        (!cfg!(windows)).then_some(EXPECTED),
+        "{var}"
+      );
+    }
+  }
+
+  #[test]
+  #[ignore = "written against an install-tl TeX Live 2025 layout, not portable; run locally with `cargo test -- --ignored`"]
+  fn a_default_that_finds_texmf_cnf_keeps_it_and_is_asked_last() {
+    let cnf = Path::new(ROOT).join("texmf-dist/web2c/texmf.cnf");
+    let got = texmfcnf_extension(Some(ROOT), |_| false, |path| path == cnf, || true);
+    assert_eq!(got, None);
+    // Not consulted when the tree has no texmf.cnf or the user set TEXMFCNF.
+    let probe = |user_set: bool, has_cnf: bool| {
+      let mut asked = false;
+      texmfcnf_extension(
+        Some(ROOT),
+        |_| user_set,
+        |_| has_cnf,
+        || {
+          asked = true;
+          false
+        },
+      );
+      asked
+    };
+    assert!(!probe(true, true));
+    assert!(!probe(false, false));
+    assert_eq!(probe(false, true), !cfg!(windows));
+  }
+}
+
+/// Whether the library, as configured now, finds a `texmf.cnf` along its configuration path — the search
+/// `read_all_cnf` (cnf.c) makes when a first lookup reads the configuration, here without reading the file.
+///
+/// # Safety
+/// `kpse` must be a live instance after `kpathsea_set_program_name` whose configuration has not been read, used under
+/// [`KPSE_GLOBAL_LOCK`]. Afterwards it reads its configuration as it would have at construction: the cnf path it caches
+/// is the one `read_all_cnf` would compute from the environment now, and `followup_search` (the flag pathsearch.c's
+/// `search()` sets after the first, unlogged search) is reset, so that first search stays unlogged.
+#[cfg(all(kpathsea_linked, not(windows)))]
+unsafe fn cnf_path_finds_texmf_cnf(kpse: kpathsea) -> bool {
+  unsafe {
+    // As `kpathsea_cnf_get` around `read_all_cnf`: no variable is looked up in a configuration not yet read.
+    (*kpse).doing_cnf_init = 1;
+    let path = kpathsea_init_format(kpse, kpse_file_format_type_kpse_cnf_format);
+    let found = kpathsea_path_search(kpse, path, c"texmf.cnf".as_ptr(), 0);
+    (*kpse).doing_cnf_init = 0;
+    (*kpse).followup_search = 0;
+    if found.is_null() {
+      return false;
+    }
+    free(found.cast());
+    true
+  }
+}
+
+/// The probe on a live instance. CI's distro `kpsewhich` anchors on `/`, so [`Kpaths::new`] never reaches the probe
+/// there; this runs it directly: anchored on the `kpsewhich` found, the library's own configuration path finds a
+/// `texmf.cnf`, and the instance still resolves after the probe.
+#[cfg(all(test, kpathsea_linked, not(windows)))]
+mod cnf_probe_on_a_live_instance {
+  use super::*;
+
+  #[test]
+  #[ignore = "written against an install-tl TeX Live 2025 layout, not portable; run locally with `cargo test -- --ignored`"]
+  fn probe_finds_the_default_texmf_cnf_and_lookups_still_resolve() {
+    let Ok(program_name) = get_kpsewhich_path() else {
+      eprintln!(
+        "SKIP probe_finds_the_default_texmf_cnf_and_lookups_still_resolve: no kpsewhich on PATH"
+      );
+      return;
+    };
+    let guard = KPSE_GLOBAL_LOCK
+      .lock()
+      .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let kpse = unsafe { kpathsea_new() };
+    unsafe { kpathsea_set_program_name(kpse, program_name.as_ptr(), std::ptr::null()) };
+    // SAFETY: a fresh instance after `kpathsea_set_program_name`, its configuration not yet read, under the lock.
+    let found = unsafe { cnf_path_finds_texmf_cnf(kpse) };
+    drop(guard);
+    let kpaths = Kpaths(Backend::InProcess(kpse));
+    assert!(
+      found,
+      "the library's own configuration path finds no texmf.cnf beside the kpsewhich it is anchored on"
+    );
+    assert!(
+      kpaths.find_file("article.cls").is_some(),
+      "article.cls must still resolve after the probe"
+    );
+  }
+}
+
 /// libkpathsea's `kpse_set_program_name` mutates process-global state:
 /// static path buffers and the environment via `putenv`. Two threads
 /// constructing `Kpaths` concurrently interleave those buffers and crash
@@ -408,6 +617,11 @@ impl Kpaths {
   /// per thread — rather than constructing (and re-warming) per lookup.
   /// The subprocess backend shares one `ls-R` cache process-wide and has
   /// no per-instance warm-up.
+  ///
+  /// On a linked non-Windows build, the configuration search path is fixed
+  /// when `new` runs: set `TEXMFCNF` (and anything else that steers where
+  /// `texmf.cnf` is looked for) before constructing, not after. See
+  /// [`appended_texmfcnf`] for the one case where `new` extends it.
   pub fn new() -> Result<Self> {
     #[cfg(kpathsea_linked)]
     {
@@ -419,8 +633,29 @@ impl Kpaths {
       let _guard = KPSE_GLOBAL_LOCK
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
-      let kpse = unsafe { kpathsea_new() };
+      #[cfg_attr(windows, allow(unused_mut))]
+      let mut kpse = unsafe { kpathsea_new() };
       unsafe { kpathsea_set_program_name(kpse, program_name.as_ptr(), std::ptr::null()) }
+      // The configuration is read at the first lookup (`kpathsea_cnf_get`, cnf.c), so TEXMFCNF set here still counts.
+      #[cfg(not(windows))]
+      if let Some(texmfcnf) = texmfcnf_extension(
+        std::env::var("SELFAUTOPARENT").ok().as_deref(),
+        // An empty value counts as unset, as kpathsea's `init_path` ignores it.
+        |var| std::env::var_os(var).is_some_and(|v| !v.is_empty()),
+        |path| path.is_file(),
+        || unsafe { cnf_path_finds_texmf_cnf(kpse) },
+      ) && let Ok(value) = CString::new(texmfcnf.as_str())
+      {
+        // SAFETY: under KPSE_GLOBAL_LOCK, like the putenvs of `kpathsea_set_program_name`. The probe cached the
+        // compiled-in cnf path in this instance, so a fresh one, anchored the same way, reads the extended one.
+        unsafe {
+          kpathsea_finish(kpse);
+          kpse = kpathsea_new();
+          kpathsea_xputenv(kpse, c"TEXMFCNF".as_ptr(), value.as_ptr());
+          kpathsea_set_program_name(kpse, program_name.as_ptr(), std::ptr::null());
+        }
+        let _ = APPENDED_TEXMFCNF.set(texmfcnf);
+      }
       Ok(Kpaths(Backend::InProcess(kpse)))
     }
     #[cfg(not(kpathsea_linked))]

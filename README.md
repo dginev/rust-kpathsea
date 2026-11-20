@@ -46,6 +46,7 @@ Environment variables:
 | Variable | Effect |
 |---|---|
 | `KPSEWHICH` | the `kpsewhich` executable both backends anchor on |
+| `TEXMFCNF` | when unset, and a linked library's compiled-in directories hold no `texmf.cnf`, `Kpaths::new` appends those of the install-tl tree it anchors on (`appended_texmfcnf()` reports it) |
 | `KPATHSEA_LIB_DIR` | link `libkpathsea` from this directory |
 | `KPATHSEA_NO_LINK=1` | force the subprocess backend at build time |
 | `KPATHSEA_SKIP_TOOLCHAIN_CHECK=1` | permit building with no TeX installed (docs.rs and cross-compilation skip the check automatically) |
