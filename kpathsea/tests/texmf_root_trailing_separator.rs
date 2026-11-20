@@ -38,11 +38,14 @@ fn trailing_separator_on_texmf_root_resolves_as_without() {
     std::env::remove_var("TEXMFDIST");
   }
   // Without the trim the subprocess backend's ls-R cache returns `…//texmf-dist/…` paths, its spawned `kpsewhich`
-  // and the linked library resolve nothing. A bare executable name: the ls-R cache is shared per executable path.
-  assert_eq!(resolve(&Kpaths::with_kpsewhich("kpsewhich")), expected);
+  // and the linked library resolve nothing. The same executable as above: its shared ls-R cache is keyed by the roots.
+  assert_eq!(resolve(&Kpaths::new_subprocess().unwrap()), expected);
+  let [trimmed] = trimmed_texmf_roots() else {
+    panic!("{:?}", trimmed_texmf_roots());
+  };
   assert_eq!(
-    trimmed_texmf_roots(),
-    [("TEXMFROOT", slashed.clone(), root.clone())]
+    (trimmed.var, trimmed.given.as_str(), trimmed.used.as_str()),
+    ("TEXMFROOT", slashed.as_str(), root.as_str())
   );
   assert_eq!(
     std::env::var("TEXMFROOT").unwrap(),
@@ -51,7 +54,7 @@ fn trailing_separator_on_texmf_root_resolves_as_without() {
   );
   let kpse = Kpaths::new().unwrap();
   assert_eq!(resolve(&kpse), expected);
-  if kpse.is_in_process() && !cfg!(windows) {
+  if kpse.is_in_process() {
     assert_eq!(std::env::var("TEXMFROOT").unwrap(), root);
   }
 }

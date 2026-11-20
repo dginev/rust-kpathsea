@@ -73,18 +73,23 @@ struct SharedKpse {
   installer_args: Vec<String>,
 }
 
-/// One [`SharedKpse`] per `kpsewhich` executable — Perl's `$kpse_cache`
-/// is likewise a process global.
-static KPSE_REGISTRY: LazyLock<Mutex<HashMap<PathBuf, Arc<SharedKpse>>>> =
+/// One [`SharedKpse`] per `kpsewhich` executable and trimmed TEXMF roots
+/// (an instance given other roots resolves in another tree) — Perl's
+/// `$kpse_cache` is likewise a process global.
+static KPSE_REGISTRY: LazyLock<Mutex<HashMap<RegistryKey, Arc<SharedKpse>>>> =
   LazyLock::new(|| Mutex::new(HashMap::new()));
+
+/// A [`KPSE_REGISTRY`] key: the executable and the roots its calls are given.
+type RegistryKey = (PathBuf, RootEnv);
 
 /// Fetch (or build) the shared state for this executable; `roots` are the
 /// trimmed TEXMF roots its `kpsewhich` calls are given.
 fn shared_kpse(kpsewhich: &Path, roots: &RootEnv) -> Arc<SharedKpse> {
+  let key = (kpsewhich.to_path_buf(), roots.clone());
   if let Some(shared) = KPSE_REGISTRY
     .lock()
     .unwrap_or_else(PoisonError::into_inner)
-    .get(kpsewhich)
+    .get(&key)
   {
     return Arc::clone(shared);
   }
@@ -96,7 +101,7 @@ fn shared_kpse(kpsewhich: &Path, roots: &RootEnv) -> Arc<SharedKpse> {
     installer_args: probe_installer_args(kpsewhich, roots),
   });
   let mut registry = KPSE_REGISTRY.lock().unwrap_or_else(PoisonError::into_inner);
-  Arc::clone(registry.entry(kpsewhich.to_path_buf()).or_insert(built))
+  Arc::clone(registry.entry(key).or_insert(built))
 }
 
 /// The TEXMF root variables a spawned `kpsewhich` is given without their
@@ -131,7 +136,7 @@ impl SubprocessKpse {
       kpsewhich: path,
       roots: trims
         .into_iter()
-        .map(|(var, _, used)| (var, used))
+        .map(|root| (root.var, root.used))
         .collect(),
       shared: OnceLock::new(),
     }

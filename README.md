@@ -47,7 +47,7 @@ Environment variables:
 |---|---|
 | `KPSEWHICH` | the `kpsewhich` executable both backends anchor on |
 | `TEXMFCNF` | when unset, and a linked library's compiled-in directories hold no `texmf.cnf`, `Kpaths::new` appends those of the install-tl tree it anchors on (`appended_texmfcnf()` reports it) |
-| `TEXMFROOT`, `TEXMFDIST`, … (`TEXMF_ROOT_VARS`) | read without a trailing separator, which texmf.cnf's `$TEXMFROOT/texmf-dist` would turn into a `//` recursive search of the whole tree (`trimmed_texmf_roots()` reports it) |
+| `TEXMFROOT`, `TEXMFDIST`, … (`TEXMF_ROOT_VARS`) | read without a trailing separator, which texmf.cnf's `$TEXMFROOT/texmf-dist` would turn into a `//` recursive search of the whole tree (`trimmed_texmf_roots()` reports it); program-qualified names (`TEXMFROOT.<progname>`) and brace lists (`{/a/,/b/}`) stay as written, and `/` keeps its separator |
 | `KPATHSEA_LIB_DIR` | link `libkpathsea` from this directory |
 | `KPATHSEA_NO_LINK=1` | force the subprocess backend at build time |
 | `KPATHSEA_SKIP_TOOLCHAIN_CHECK=1` | permit building with no TeX installed (docs.rs and cross-compilation skip the check automatically) |

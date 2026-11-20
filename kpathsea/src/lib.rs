@@ -24,8 +24,8 @@
 //! tens of µs, hit or miss. Subprocess lookups are *bimodal*: sub-µs on an
 //! `ls-R` cache hit — faster than the FFI path — but a cache miss costs a
 //! `kpsewhich` spawn (tens to hundreds of ms, memoized process-wide per
-//! executable so a repeated miss is only ever paid once, regardless of
-//! which instance or thread asks).
+//! executable and TEXMF roots, so a repeated miss is only ever paid once,
+//! regardless of which instance or thread asks).
 
 #[cfg(kpathsea_linked)]
 use kpathsea_sys::*;
@@ -437,18 +437,27 @@ mod cnf_probe_on_a_live_instance {
   }
 }
 
+// The opaque Windows bindings of `kpathsea_sys` 0.2.3 omit `kpathsea_xputenv`; TeX Live's kpathsea DLL exports it
+// (`KPSEDLL` in lib.h) and the `build-from-source` leg compiles xputenv.c.
+#[cfg(all(kpathsea_linked, windows))]
+unsafe extern "C" {
+  /// `void kpathsea_xputenv (kpathsea kpse, const_string var, const_string value)` (lib.h).
+  fn kpathsea_xputenv(kpse: kpathsea, var: const_string, value: const_string);
+}
+
 /// Hand the library the TEXMF roots without their trailing separator (dginev/latexml-oxide#950): `kpathsea_var_value`
 /// (variable.c) prefers the environment to texmf.cnf, so the cnf's `$TEXMFROOT/texmf-dist` expands without a `//`.
 ///
 /// # Safety
 /// `kpse` must be a live instance whose configuration has not been read (`kpathsea_set_program_name` reads none; the
 /// first `kpathsea_cnf_get` does), used under [`KPSE_GLOBAL_LOCK`]: `kpathsea_xputenv` writes the process environment.
-#[cfg(all(kpathsea_linked, not(windows)))]
+#[cfg(kpathsea_linked)]
 unsafe fn put_texmf_roots(kpse: kpathsea, roots: &[TrimmedRoot]) {
-  for (var, _, used) in roots {
-    let (Ok(var), Ok(used)) = (CString::new(*var), CString::new(used.as_str())) else {
+  for root in roots {
+    let (Ok(var), Ok(used)) = (CString::new(root.var), CString::new(root.used.as_str())) else {
       continue;
     };
+    // SAFETY: NUL-terminated strings that outlive the call (the library copies them into the `VAR=VALUE` it puts).
     unsafe { kpathsea_xputenv(kpse, var.as_ptr(), used.as_ptr()) };
   }
 }
@@ -643,9 +652,9 @@ impl Kpaths {
   ///
   /// Both backends read the TEXMF root variables ([`TEXMF_ROOT_VARS`]) without
   /// a trailing separator ([`trim_texmf_root`]): the linked library through
-  /// the environment, which a linked non-Windows `new` rewrites with the
-  /// trimmed values; the subprocess backend through each `kpsewhich` it
-  /// spawns. [`trimmed_texmf_roots`] reports them.
+  /// the environment, which a linked `new` rewrites with the trimmed values;
+  /// the subprocess backend through each `kpsewhich` it spawns.
+  /// [`trimmed_texmf_roots`] reports them.
   pub fn new() -> Result<Self> {
     #[cfg(kpathsea_linked)]
     {
@@ -659,15 +668,11 @@ impl Kpaths {
         .unwrap_or_else(std::sync::PoisonError::into_inner);
       // The roots without a trailing separator (see `trim_texmf_root`), read under the lock: another construction may
       // be writing them.
-      #[cfg(not(windows))]
       let roots = texmf_roots::texmf_root_trims();
       #[cfg_attr(windows, allow(unused_mut))]
       let mut kpse = unsafe { kpathsea_new() };
       // SAFETY: a fresh instance, under the lock; written before the configuration is first read.
-      #[cfg(not(windows))]
-      unsafe {
-        put_texmf_roots(kpse, &roots)
-      };
+      unsafe { put_texmf_roots(kpse, &roots) };
       unsafe { kpathsea_set_program_name(kpse, program_name.as_ptr(), std::ptr::null()) }
       // The configuration is read at the first lookup (`kpathsea_cnf_get`, cnf.c), so TEXMFCNF set here still counts.
       #[cfg(not(windows))]
@@ -690,7 +695,6 @@ impl Kpaths {
         }
         let _ = APPENDED_TEXMFCNF.set(texmfcnf);
       }
-      #[cfg(not(windows))]
       texmf_roots::record_trims(&roots);
       Ok(Kpaths(Backend::InProcess(kpse)))
     }

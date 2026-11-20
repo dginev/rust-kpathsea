@@ -24,14 +24,25 @@ pub const TEXMF_ROOT_VARS: [&str; 9] = [
   "TEXMFCONFIG",
 ];
 
-/// A root variable [`crate::Kpaths::new`] trimmed: the variable, its value as given, and the value used.
-pub type TrimmedRoot = (&'static str, String, String);
+/// A root variable whose trailing separator a [`crate::Kpaths`] construction trimmed.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct TrimmedRoot {
+  /// The variable, one of [`TEXMF_ROOT_VARS`].
+  pub var: &'static str,
+  /// Its value as given in the environment.
+  pub given: String,
+  /// The value the backends use instead.
+  pub used: String,
+}
 
 /// A TEXMF root `value` without its trailing directory separators, or `None` when there is none to trim.
 ///
-/// A value that is a path list or a brace expansion (holding the path-list separator, `,` or `{`) is a search spec
-/// and stays as written; a file-system or drive root (`/`, `C:/`, `C:\`) keeps one separator; only the end is trimmed
-/// (a `!!` prefix or a `//` inside the path stays). The separators are `/`, and on Windows also `\`.
+/// A value that is a path list or a brace expansion (holding the path-list separator, `,` or `{`, as `{/a/,/b/}`) is a
+/// search spec and stays as written; a file-system or drive root (`/`, `C:/`, `C:\`) keeps one separator (a root of
+/// `/` is no working install either way); only the end is trimmed (a `!!` prefix or a `//` inside the path stays).
+/// The separators are `/`, and on Windows also `\`. Program-qualified names (`TEXMFROOT.<progname>`,
+/// `TEXMFROOT_<progname>`) are not among [`TEXMF_ROOT_VARS`] and stay as written.
 pub fn trim_texmf_root(value: &str) -> Option<String> {
   trim_root_separators(value, cfg!(windows))
 }
@@ -65,7 +76,7 @@ pub(crate) fn texmf_root_trims() -> Vec<TrimmedRoot> {
     .filter_map(|&var| {
       let given = std::env::var(var).ok()?;
       let used = trim_texmf_root(&given)?;
-      Some((var, given, used))
+      Some(TrimmedRoot { var, given, used })
     })
     .collect()
 }
@@ -81,8 +92,8 @@ pub(crate) fn record_trims(trims: &[TrimmedRoot]) {
 }
 
 /// The root variables (see [`TEXMF_ROOT_VARS`]) whose trailing separator a [`crate::Kpaths`] construction of this
-/// process trimmed, each as (variable, value as given, value used); empty when none had one (the usual case). For a
-/// caller's log, next to [`crate::appended_texmfcnf`].
+/// process trimmed, with its value as given and as used; empty when none had one (the usual case). For a caller's log,
+/// next to [`crate::appended_texmfcnf`].
 ///
 /// The linked library is handed the trimmed values in the environment (a later construction then finds nothing to
 /// trim), the subprocess backend passes them to each `kpsewhich` it spawns.

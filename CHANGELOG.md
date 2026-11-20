@@ -16,19 +16,25 @@
   The roots are `TEXMFROOT`, `TEXMFDIST`, `TEXMFMAIN`, `TEXMFLOCAL`,
   `TEXMFSYSVAR`, `TEXMFSYSCONFIG`, `TEXMFHOME`, `TEXMFVAR` and `TEXMFCONFIG`
   (`TEXMF_ROOT_VARS`). A value holding the path-list separator, `,` or `{` is a
-  search spec and stays as written, as do the search-path variables
-  (`TEXINPUTS`, `TEXMFCNF`, …), whose `//` is deliberate; `/`, `C:/` and `C:\`
-  keep their separator; on Windows a trailing `\` is trimmed too. The linked
+  search spec and stays as written (`{/a/,/b/}`), as do the search-path
+  variables (`TEXINPUTS`, `TEXMFCNF`, …), whose `//` is deliberate, and the
+  program-qualified names (`TEXMFROOT.<progname>`, `TEXMFROOT_<progname>`);
+  `/`, `C:/` and `C:\` keep their separator (a root of `/` is no working
+  install either way); on Windows a trailing `\` is trimmed too. The linked
   backend writes the trimmed values with `kpathsea_xputenv` under the
   construction lock, before the configuration is first read (the library
   prefers the environment to texmf.cnf), so later constructions and child
-  processes see them; the subprocess backend leaves the process environment
-  alone and passes them to every `kpsewhich` it spawns. Not on a linked
-  Windows build, whose opaque bindings have no `kpathsea_xputenv`.
+  processes see them; on Windows through a declaration of our own, as
+  `kpathsea_sys`'s opaque Windows bindings omit it. The subprocess backend
+  leaves the process environment alone and passes them to every `kpsewhich`
+  it spawns; its shared `ls-R` cache and miss memo are now kept per
+  executable and trimmed roots, so instances given other roots no longer
+  share them.
 
   New: `trim_texmf_root()` (the pure rule), `TEXMF_ROOT_VARS`, and
-  `trimmed_texmf_roots()`, which reports each trimmed variable with its value
-  as given and as used, for a caller's log (next to `appended_texmfcnf()`).
+  `trimmed_texmf_roots()`, which reports each trimmed variable as a
+  `TrimmedRoot { var, given, used }`, for a caller's log (next to
+  `appended_texmfcnf()`).
   Guarded by the `texmf_roots` unit tests and the local-only
   `texmf_root_trailing_separator` test. Motivated by
   `dginev/latexml-oxide#950`.
