@@ -294,12 +294,14 @@ mod texmfcnf_extension_rule {
   }
 
   #[test]
+  #[ignore = "written against an install-tl TeX Live 2025 layout, not portable; run locally with `cargo test -- --ignored`"]
   fn appends_the_install_tl_directories_after_the_default() {
     let got = extension(Some(ROOT), |_| false);
     assert_eq!(got.as_deref(), (!cfg!(windows)).then_some(EXPECTED));
   }
 
   #[test]
+  #[ignore = "written against an install-tl TeX Live 2025 layout, not portable; run locally with `cargo test -- --ignored`"]
   fn a_trailing_or_doubled_slash_never_joins_into_a_recursive_element() {
     for root in [
       "/usr/local/texlive/2025/",
@@ -316,6 +318,7 @@ mod texmfcnf_extension_rule {
   }
 
   #[test]
+  #[ignore = "written against an install-tl TeX Live 2025 layout, not portable; run locally with `cargo test -- --ignored`"]
   fn a_tree_at_the_file_system_root_has_no_grandparent() {
     let got = texmfcnf_extension(Some("/"), |_| false, |_| true, || false);
     let expected = ":/:/texmf-dist/web2c";
@@ -323,6 +326,7 @@ mod texmfcnf_extension_rule {
   }
 
   #[test]
+  #[ignore = "written against an install-tl TeX Live 2025 layout, not portable; run locally with `cargo test -- --ignored`"]
   fn no_root_or_no_texmf_cnf_under_it_changes_nothing() {
     assert_eq!(extension(None, |_| false), None);
     assert_eq!(extension(Some("/usr"), |_| false), None);
@@ -330,6 +334,7 @@ mod texmfcnf_extension_rule {
   }
 
   #[test]
+  #[ignore = "written against an install-tl TeX Live 2025 layout, not portable; run locally with `cargo test -- --ignored`"]
   fn only_a_user_texmfcnf_blocks_it() {
     assert_eq!(extension(Some(ROOT), |var| var == "TEXMFCNF"), None);
     // TEXMFROOT/TEXMFDIST steer the variables, not where texmf.cnf is looked for (latexml-oxide sets TEXMFROOT itself).
@@ -344,6 +349,7 @@ mod texmfcnf_extension_rule {
   }
 
   #[test]
+  #[ignore = "written against an install-tl TeX Live 2025 layout, not portable; run locally with `cargo test -- --ignored`"]
   fn a_default_that_finds_texmf_cnf_keeps_it_and_is_asked_last() {
     let cnf = Path::new(ROOT).join("texmf-dist/web2c/texmf.cnf");
     let got = texmfcnf_extension(Some(ROOT), |_| false, |path| path == cnf, || true);
@@ -401,6 +407,7 @@ mod cnf_probe_on_a_live_instance {
   use super::*;
 
   #[test]
+  #[ignore = "written against an install-tl TeX Live 2025 layout, not portable; run locally with `cargo test -- --ignored`"]
   fn probe_finds_the_default_texmf_cnf_and_lookups_still_resolve() {
     let Ok(program_name) = get_kpsewhich_path() else {
       eprintln!(
