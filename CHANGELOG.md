@@ -18,14 +18,21 @@
   the file. Only when it does not, the anchor's tree holds
   `texmf-dist/web2c/texmf.cnf` and the user set no `TEXMFCNF`, it sets
   `TEXMFCNF=:<root>/../texmf-local/web2c:<root>:<root>/texmf-dist/web2c`
-  (grandparent resolved; TeX Live's own default directories of an install-tl
-  tree, in its order). The leading `:` keeps the compiled-in default first.
+  (grandparent resolved; the subset of TeX Live's default directories that an
+  install-tl tree populates, in its order). The leading `:` keeps the compiled-in default first.
   Where the library already finds a `texmf.cnf` (a distro TeX Live, a dual
   distro + install-tl host, Homebrew, the `build-from-source` library) nothing
   changes; kpathsea would otherwise read a file found on both paths twice.
   `TEXMFROOT`/`TEXMFDIST` do not decide where `texmf.cnf` is looked for, so a
   caller's pin of them does not block it. Not on Windows, where the anchor
   already governs the search.
+
+  The configuration search path is now fixed when `Kpaths::new()` runs, so a
+  `TEXMFCNF` set after construction no longer takes effect; set it before. An
+  empty `TEXMFCNF` counts as unset, as kpathsea treats it. Known limit: a stray
+  `texmf.cnf` on the compiled-in path that defines no TEXMF variables (e.g. a
+  leftover `/etc/texmf/web2c/texmf.cnf`) counts as found, so nothing is
+  appended there.
 
   The new `appended_texmfcnf()` returns the value set, for a caller's log.
   Guarded by the `texmfcnf_extension_rule` unit tests. Motivated by

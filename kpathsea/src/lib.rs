@@ -247,7 +247,7 @@ pub fn appended_texmfcnf() -> Option<&'static str> {
 /// search install-tl's `$SELFAUTOPARENT/texmf-dist/web2c`; with no distro tree beside it, it finds no `texmf.cnf` and
 /// resolves nothing (dginev/latexml-oxide#948, a Docker image). Only then, when `selfautoparent` (kpathsea's own, from
 /// `kpathsea_set_program_name`) holds `texmf-dist/web2c/texmf.cnf` and the user set no `TEXMFCNF`, are TeX Live's
-/// own default directories of an install-tl tree appended, in its order (`$SELFAUTOGRANDPARENT/texmf-local/web2c`,
+/// own default directories of an install-tl tree (the subset an install-tl tree populates) appended, in its order (`$SELFAUTOGRANDPARENT/texmf-local/web2c`,
 /// `$SELFAUTOPARENT`, `$SELFAUTOPARENT/texmf-dist/web2c`). The leading `:` keeps the compiled-in default first.
 /// `TEXMFROOT`/`TEXMFDIST` do not steer where `texmf.cnf` is looked for (`CNF_ENVS`, tex-file.c), so they block
 /// nothing: the appended file then reads them as the anchor's own `kpsewhich` does. `default_finds_cnf` runs last and
@@ -373,8 +373,9 @@ mod texmfcnf_extension_rule {
 ///
 /// # Safety
 /// `kpse` must be a live instance after `kpathsea_set_program_name` whose configuration has not been read, used under
-/// [`KPSE_GLOBAL_LOCK`]. Afterwards it reads its configuration as it would have: the cnf path it caches is the one
-/// `read_all_cnf` computes, and the search counter `search` (pathsearch.c) keeps for that first read is restored.
+/// [`KPSE_GLOBAL_LOCK`]. Afterwards it reads its configuration as it would have at construction: the cnf path it caches
+/// is the one `read_all_cnf` would compute from the environment now, and `followup_search` (the flag pathsearch.c's
+/// `search()` sets after the first, unlogged search) is reset, so that first search stays unlogged.
 #[cfg(all(kpathsea_linked, not(windows)))]
 unsafe fn cnf_path_finds_texmf_cnf(kpse: kpathsea) -> bool {
   unsafe {
@@ -389,6 +390,41 @@ unsafe fn cnf_path_finds_texmf_cnf(kpse: kpathsea) -> bool {
     }
     free(found.cast());
     true
+  }
+}
+
+/// The probe on a live instance. CI's distro `kpsewhich` anchors on `/`, so [`Kpaths::new`] never reaches the probe
+/// there; this runs it directly: anchored on the `kpsewhich` found, the library's own configuration path finds a
+/// `texmf.cnf`, and the instance still resolves after the probe.
+#[cfg(all(test, kpathsea_linked, not(windows)))]
+mod cnf_probe_on_a_live_instance {
+  use super::*;
+
+  #[test]
+  fn probe_finds_the_default_texmf_cnf_and_lookups_still_resolve() {
+    let Ok(program_name) = get_kpsewhich_path() else {
+      eprintln!(
+        "SKIP probe_finds_the_default_texmf_cnf_and_lookups_still_resolve: no kpsewhich on PATH"
+      );
+      return;
+    };
+    let guard = KPSE_GLOBAL_LOCK
+      .lock()
+      .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let kpse = unsafe { kpathsea_new() };
+    unsafe { kpathsea_set_program_name(kpse, program_name.as_ptr(), std::ptr::null()) };
+    // SAFETY: a fresh instance after `kpathsea_set_program_name`, its configuration not yet read, under the lock.
+    let found = unsafe { cnf_path_finds_texmf_cnf(kpse) };
+    drop(guard);
+    let kpaths = Kpaths(Backend::InProcess(kpse));
+    assert!(
+      found,
+      "the library's own configuration path finds no texmf.cnf beside the kpsewhich it is anchored on"
+    );
+    assert!(
+      kpaths.find_file("article.cls").is_some(),
+      "article.cls must still resolve after the probe"
+    );
   }
 }
 
@@ -574,6 +610,11 @@ impl Kpaths {
   /// per thread — rather than constructing (and re-warming) per lookup.
   /// The subprocess backend shares one `ls-R` cache process-wide and has
   /// no per-instance warm-up.
+  ///
+  /// On a linked non-Windows build, the configuration search path is fixed
+  /// when `new` runs: set `TEXMFCNF` (and anything else that steers where
+  /// `texmf.cnf` is looked for) before constructing, not after. See
+  /// [`appended_texmfcnf`] for the one case where `new` extends it.
   pub fn new() -> Result<Self> {
     #[cfg(kpathsea_linked)]
     {
@@ -592,7 +633,8 @@ impl Kpaths {
       #[cfg(not(windows))]
       if let Some(texmfcnf) = texmfcnf_extension(
         std::env::var("SELFAUTOPARENT").ok().as_deref(),
-        |var| std::env::var_os(var).is_some(),
+        // An empty value counts as unset, as kpathsea's `init_path` ignores it.
+        |var| std::env::var_os(var).is_some_and(|v| !v.is_empty()),
         |path| path.is_file(),
         || unsafe { cnf_path_finds_texmf_cnf(kpse) },
       ) && let Ok(value) = CString::new(texmfcnf.as_str())
