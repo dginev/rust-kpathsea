@@ -78,8 +78,9 @@ struct SharedKpse {
 static KPSE_REGISTRY: LazyLock<Mutex<HashMap<PathBuf, Arc<SharedKpse>>>> =
   LazyLock::new(|| Mutex::new(HashMap::new()));
 
-/// Fetch (or build) the shared state for this executable.
-fn shared_kpse(kpsewhich: &Path) -> Arc<SharedKpse> {
+/// Fetch (or build) the shared state for this executable; `roots` are the
+/// trimmed TEXMF roots its `kpsewhich` calls are given.
+fn shared_kpse(kpsewhich: &Path, roots: &RootEnv) -> Arc<SharedKpse> {
   if let Some(shared) = KPSE_REGISTRY
     .lock()
     .unwrap_or_else(PoisonError::into_inner)
@@ -90,16 +91,23 @@ fn shared_kpse(kpsewhich: &Path) -> Arc<SharedKpse> {
   // Built OUTSIDE the registry lock — it spawns kpsewhich and reads the
   // ls-R files. A concurrent duplicate build is benign: first insert wins.
   let built = Arc::new(SharedKpse {
-    lsr: build_kpse_cache(kpsewhich),
+    lsr: build_kpse_cache(kpsewhich, roots),
     memo: Mutex::new(HashMap::new()),
-    installer_args: probe_installer_args(kpsewhich),
+    installer_args: probe_installer_args(kpsewhich, roots),
   });
   let mut registry = KPSE_REGISTRY.lock().unwrap_or_else(PoisonError::into_inner);
   Arc::clone(registry.entry(kpsewhich.to_path_buf()).or_insert(built))
 }
 
+/// The TEXMF root variables a spawned `kpsewhich` is given without their
+/// trailing separator (see [`crate::trim_texmf_root`]), as `(variable, value)`.
+type RootEnv = Vec<(&'static str, String)>;
+
 pub(crate) struct SubprocessKpse {
   kpsewhich: PathBuf,
+  /// Set on every `kpsewhich` this instance spawns (dginev/latexml-oxide#950);
+  /// the process environment is left alone.
+  roots: RootEnv,
   /// This instance's handle on the shared state (see [`KPSE_REGISTRY`]);
   /// resolved lazily by the first lookup, after which cache reads are
   /// lock-free.
@@ -115,9 +123,16 @@ impl SubprocessKpse {
   }
 
   /// Use an explicit `kpsewhich` executable path, bypassing PATH lookup.
+  /// Reads the TEXMF roots from the environment now.
   pub(crate) fn with_kpsewhich(path: PathBuf) -> Self {
+    let trims = crate::texmf_roots::texmf_root_trims();
+    crate::texmf_roots::record_trims(&trims);
     SubprocessKpse {
       kpsewhich: path,
+      roots: trims
+        .into_iter()
+        .map(|(var, _, used)| (var, used))
+        .collect(),
       shared: OnceLock::new(),
     }
   }
@@ -125,7 +140,9 @@ impl SubprocessKpse {
   /// The shared state for this instance's executable, resolved on first
   /// use (see [`KPSE_REGISTRY`]).
   fn shared(&self) -> &SharedKpse {
-    self.shared.get_or_init(|| shared_kpse(&self.kpsewhich))
+    self
+      .shared
+      .get_or_init(|| shared_kpse(&self.kpsewhich, &self.roots))
   }
 
   /// The first candidate with an `ls-R` cache entry, if any.
@@ -213,6 +230,7 @@ impl SubprocessKpse {
     // installer. It is constant per executable, so it is NOT part of the memo
     // key (which distinguishes queries, not the fixed prefix).
     let result = Command::new(&self.kpsewhich)
+      .envs(self.roots.iter().map(|(var, value)| (var, value)))
       .args(&self.shared().installer_args)
       .args(flags)
       .args(&names)
@@ -259,8 +277,9 @@ impl SubprocessKpse {
 /// means the flag is understood. Runs once per executable, at [`shared_kpse`]
 /// construction; the result is stored on [`SharedKpse`] and reused for every
 /// later lookup — no per-call detection.
-fn probe_installer_args(kpsewhich: &Path) -> Vec<String> {
+fn probe_installer_args(kpsewhich: &Path, roots: &RootEnv) -> Vec<String> {
   let accepts = Command::new(kpsewhich)
+    .envs(roots.iter().map(|(var, value)| (var, value)))
     .arg("--miktex-disable-installer")
     .arg("--version")
     .output()
@@ -301,13 +320,14 @@ fn probe_installer_args(kpsewhich: &Path) -> Vec<String> {
 ///
 /// On any failure the cache is simply left empty ("At least we've tried") —
 /// every lookup then falls through to a direct `kpsewhich` call.
-fn build_kpse_cache(kpsewhich: &Path) -> HashMap<String, String> {
+fn build_kpse_cache(kpsewhich: &Path, roots: &RootEnv) -> HashMap<String, String> {
   let mut cache = HashMap::new();
   // Get 2 bits of data from kpsewhich (with 1 call!)
   // texmf: ALL the directories used for any purposes, including docs, fonts, etc
   // texpaths: the directories which contain the TeX related files we're
   //   interested in (but they're typically below where the ls-R indexes are!)
   let Ok(out) = Command::new(kpsewhich)
+    .envs(roots.iter().map(|(var, value)| (var, value)))
     .args(["--expand-var", "$TEXMF", "--show-path", "tex"])
     .output()
   else {

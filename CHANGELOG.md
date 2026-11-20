@@ -1,5 +1,38 @@
 # Change Log
 
+## [0.3.6] 2026-11-20 — a TEXMF root with a trailing separator no longer turns into a recursive search
+
+* **`Kpaths::new()` hands both backends the TEXMF root variables without a
+  trailing separator.** texmf.cnf joins the roots with `/`
+  (`TEXMFDIST = $TEXMFROOT/texmf-dist`), so a root set in the environment
+  with a trailing `/` (`TEXMFROOT=/usr/local/texlive/2024/`, as a Dockerfile
+  set it) became `/usr/local/texlive/2024//texmf-dist`: kpathsea's `//`
+  recursive search. The linked library walked the whole tree and, its `!!`
+  ls-R-only elements no longer matching their `ls-R` directory, resolved
+  nothing; the subprocess backend's `ls-R` cache returned `…//texmf-dist/…`
+  paths, and each cache miss spawned a `kpsewhich` that walked the tree again
+  and found nothing. Real `kpsewhich` and pdflatex fail under that setting too.
+
+  The roots are `TEXMFROOT`, `TEXMFDIST`, `TEXMFMAIN`, `TEXMFLOCAL`,
+  `TEXMFSYSVAR`, `TEXMFSYSCONFIG`, `TEXMFHOME`, `TEXMFVAR` and `TEXMFCONFIG`
+  (`TEXMF_ROOT_VARS`). A value holding the path-list separator, `,` or `{` is a
+  search spec and stays as written, as do the search-path variables
+  (`TEXINPUTS`, `TEXMFCNF`, …), whose `//` is deliberate; `/`, `C:/` and `C:\`
+  keep their separator; on Windows a trailing `\` is trimmed too. The linked
+  backend writes the trimmed values with `kpathsea_xputenv` under the
+  construction lock, before the configuration is first read (the library
+  prefers the environment to texmf.cnf), so later constructions and child
+  processes see them; the subprocess backend leaves the process environment
+  alone and passes them to every `kpsewhich` it spawns. Not on a linked
+  Windows build, whose opaque bindings have no `kpathsea_xputenv`.
+
+  New: `trim_texmf_root()` (the pure rule), `TEXMF_ROOT_VARS`, and
+  `trimmed_texmf_roots()`, which reports each trimmed variable with its value
+  as given and as used, for a caller's log (next to `appended_texmfcnf()`).
+  Guarded by the `texmf_roots` unit tests and the local-only
+  `texmf_root_trailing_separator` test. Motivated by
+  `dginev/latexml-oxide#950`.
+
 ## [0.3.5] 2026-11-20 — a distro libkpathsea finds the `texmf.cnf` of the install-tl tree it anchors on
 
 * **A linked `Kpaths::new()` now reads the configuration of the TeX Live tree
