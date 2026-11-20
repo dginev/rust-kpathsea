@@ -1,5 +1,36 @@
 # Change Log
 
+## [0.3.5] 2026-11-20 — a distro libkpathsea finds the `texmf.cnf` of the install-tl tree it anchors on
+
+* **A linked `Kpaths::new()` now reads the configuration of the TeX Live tree
+  it anchors on, also through a distro-built library.** The in-process backend
+  anchors `libkpathsea` on the `kpsewhich` it finds on PATH, so
+  `$SELFAUTOPARENT` is that tree's root. But a distro-built library searches
+  only its compiled-in `texmf.cnf` directories — Debian/Ubuntu's `libkpathsea6`:
+  `/etc/texmf/web2c:/usr/local/share/texmf/web2c:/usr/share/texmf/web2c:/usr/share/texlive/texmf-dist/web2c:$SELFAUTOPARENT/share/texmf/web2c`
+  — which miss install-tl's `$SELFAUTOPARENT/texmf-dist/web2c`. Where no distro
+  TeX tree sits beside an install-tl one (a Docker image), the library warned
+  `configuration file texmf.cnf not found`, and every lookup returned `None`.
+
+  `Kpaths::new()` now asks, before the configuration is first read (at the
+  first lookup, `kpathsea_cnf_get`), whether the library's own configuration
+  path finds a `texmf.cnf` — the search `read_all_cnf` makes, without reading
+  the file. Only when it does not, the anchor's tree holds
+  `texmf-dist/web2c/texmf.cnf` and the user set no `TEXMFCNF`, it sets
+  `TEXMFCNF=:<root>/../texmf-local/web2c:<root>:<root>/texmf-dist/web2c`
+  (grandparent resolved; TeX Live's own default directories of an install-tl
+  tree, in its order). The leading `:` keeps the compiled-in default first.
+  Where the library already finds a `texmf.cnf` (a distro TeX Live, a dual
+  distro + install-tl host, Homebrew, the `build-from-source` library) nothing
+  changes; kpathsea would otherwise read a file found on both paths twice.
+  `TEXMFROOT`/`TEXMFDIST` do not decide where `texmf.cnf` is looked for, so a
+  caller's pin of them does not block it. Not on Windows, where the anchor
+  already governs the search.
+
+  The new `appended_texmfcnf()` returns the value set, for a caller's log.
+  Guarded by the `texmfcnf_extension_rule` unit tests. Motivated by
+  `dginev/latexml-oxide#948`.
+
 ## [0.3.4] 2026-07-19 — a linked `Kpaths::new()` can no longer fail; `TEXINPUTS` honored with no usable `kpsewhich`
 
 * **On a linked build, `Kpaths::new()` no longer fails when the host's
